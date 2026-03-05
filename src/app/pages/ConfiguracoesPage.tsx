@@ -1,0 +1,583 @@
+import React, { useMemo, useState } from "react";
+import { DSBadge } from "../components/ds/DSBadge";
+import { DSButton } from "../components/ds/DSButton";
+import { DSCard } from "../components/ds/DSCard";
+import { DSInput } from "../components/ds/DSInput";
+import { DSSelect } from "../components/ds/DSSelect";
+import { DSTextarea } from "../components/ds/DSTextarea";
+import { Bell, CalendarClock, Database, Lock, Plus, Save, Shield, Trash2 } from "lucide-react";
+
+type SettingsTab =
+  | "usuarios"
+  | "permissoes"
+  | "empresa"
+  | "modelos"
+  | "workflow"
+  | "integracoes"
+  | "logs";
+
+type Role = "admin" | "gestor" | "consultor" | "auditor" | "cliente";
+type PermissionLevel = "nenhum" | "leitura" | "edicao" | "admin";
+
+interface UserItem {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  status: "ativo" | "inativo";
+}
+
+interface TemplateItem {
+  id: string;
+  name: string;
+  category: string;
+  active: boolean;
+}
+
+interface WorkflowRule {
+  id: string;
+  name: string;
+  stage: string;
+  slaHours: number;
+  autoAction: boolean;
+  active: boolean;
+}
+
+interface IntegrationItem {
+  id: string;
+  name: string;
+  connected: boolean;
+  account: string;
+  lastSync: string;
+}
+
+interface AuditLogItem {
+  id: string;
+  date: string;
+  actor: string;
+  action: string;
+  module: string;
+}
+
+const tabs: { id: SettingsTab; label: string }[] = [
+  { id: "usuarios", label: "Usuarios e perfis" },
+  { id: "permissoes", label: "Permissoes granulares" },
+  { id: "empresa", label: "Parametros da empresa" },
+  { id: "modelos", label: "Modelos de documento" },
+  { id: "workflow", label: "Regras de workflow" },
+  { id: "integracoes", label: "Integracoes" },
+  { id: "logs", label: "Logs e auditoria" },
+];
+
+const roles: Role[] = ["admin", "gestor", "consultor", "auditor", "cliente"];
+const modules = ["Dashboard", "Clientes", "Projetos", "Auditorias", "RAI", "Documentos", "Relatorios", "Configuracoes"];
+
+const initialUsers: UserItem[] = [
+  { id: "U-001", name: "Carlos Silva", email: "carlos@certifica.com", role: "admin", status: "ativo" },
+  { id: "U-002", name: "Ana Costa", email: "ana@certifica.com", role: "gestor", status: "ativo" },
+  { id: "U-003", name: "Maria Santos", email: "maria@certifica.com", role: "consultor", status: "ativo" },
+  { id: "U-004", name: "Pedro Souza", email: "pedro@certifica.com", role: "auditor", status: "ativo" },
+];
+
+const initialMatrix: Record<Role, Record<string, PermissionLevel>> = {
+  admin: Object.fromEntries(modules.map((m) => [m, "admin"])) as Record<string, PermissionLevel>,
+  gestor: Object.fromEntries(modules.map((m) => [m, m === "Configuracoes" ? "leitura" : "edicao"])) as Record<string, PermissionLevel>,
+  consultor: Object.fromEntries(modules.map((m) => [m, ["Dashboard", "Clientes", "Projetos", "Auditorias", "Documentos"].includes(m) ? "edicao" : "leitura"])) as Record<string, PermissionLevel>,
+  auditor: Object.fromEntries(modules.map((m) => [m, ["Auditorias", "RAI", "Documentos", "Relatorios"].includes(m) ? "edicao" : "leitura"])) as Record<string, PermissionLevel>,
+  cliente: Object.fromEntries(modules.map((m) => [m, ["Dashboard", "Documentos", "Relatorios"].includes(m) ? "leitura" : "nenhum"])) as Record<string, PermissionLevel>,
+};
+
+const initialTemplates: TemplateItem[] = [
+  { id: "T-001", name: "RAI padrao Certifica", category: "Auditoria", active: true },
+  { id: "T-002", name: "Plano de Acao NC", category: "Nao conformidade", active: true },
+  { id: "T-003", name: "Resumo executivo mensal", category: "Relatorios", active: true },
+  { id: "T-004", name: "Checklist onboarding cliente", category: "Projetos", active: false },
+];
+
+const initialRules: WorkflowRule[] = [
+  { id: "W-001", name: "Aprovacao RAI", stage: "revisao-tecnica", slaHours: 24, autoAction: true, active: true },
+  { id: "W-002", name: "Revisao documental", stage: "revisao", slaHours: 48, autoAction: true, active: true },
+  { id: "W-003", name: "Escalonamento NC critica", stage: "tratamento", slaHours: 12, autoAction: true, active: true },
+];
+
+const initialIntegrations: IntegrationItem[] = [
+  { id: "I-001", name: "Google Drive", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 09:10" },
+  { id: "I-002", name: "Google Meet", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 08:55" },
+  { id: "I-003", name: "WhatsApp / Z-API", connected: false, account: "", lastSync: "Nunca" },
+  { id: "I-004", name: "E-mail SMTP", connected: true, account: "no-reply@certifica.com", lastSync: "19/02/2026 09:04" },
+  { id: "I-005", name: "Calendario", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 09:07" },
+];
+
+const initialLogs: AuditLogItem[] = [
+  { id: "L-001", date: "19/02/2026 09:32", actor: "Carlos Silva", action: "Alterou matriz de permissao (consultor)", module: "Configuracoes" },
+  { id: "L-002", date: "19/02/2026 09:15", actor: "Ana Costa", action: "Atualizou regra SLA de aprovacao RAI", module: "Workflow" },
+  { id: "L-003", date: "19/02/2026 08:41", actor: "Sistema", action: "Sincronizacao Drive concluida", module: "Integracoes" },
+];
+
+export default function ConfiguracoesPage() {
+  const [tab, setTab] = useState<SettingsTab>("usuarios");
+  const [users, setUsers] = useState<UserItem[]>(initialUsers);
+  const [matrix, setMatrix] = useState(initialMatrix);
+  const [templates, setTemplates] = useState<TemplateItem[]>(initialTemplates);
+  const [rules, setRules] = useState<WorkflowRule[]>(initialRules);
+  const [integrations, setIntegrations] = useState<IntegrationItem[]>(initialIntegrations);
+  const [logs, setLogs] = useState<AuditLogItem[]>(initialLogs);
+  const [logSearch, setLogSearch] = useState("");
+
+  const [security, setSecurity] = useState({
+    minLength: "10",
+    force2fa: true,
+    rotationDays: "90",
+    sessionTimeout: "30",
+  });
+  const [notifications, setNotifications] = useState({
+    emailAlerts: true,
+    whatsappAlerts: false,
+    digestDaily: true,
+    dueReminderDays: "3",
+  });
+  const [lgpd, setLgpd] = useState({
+    retentionMonths: "24",
+    anonymizeAfter: "12",
+    consentVersion: "v2.1",
+    consentText: "Consentimento para tratamento de dados conforme finalidade contratual e obrigacoes legais.",
+  });
+  const [company, setCompany] = useState({
+    legalName: "Certifica Consultoria Ltda",
+    cnpj: "12.345.678/0001-90",
+    timezone: "America/Sao_Paulo",
+    language: "pt-BR",
+    defaultNorm: "ISO 9001:2015",
+  });
+  const [newUser, setNewUser] = useState({ name: "", email: "", role: "consultor" as Role });
+  const [newTemplate, setNewTemplate] = useState({ name: "", category: "" });
+  const [saveStamp, setSaveStamp] = useState("");
+
+  const addLog = (action: string, module: string, actor = "Carlos Silva") => {
+    const date = new Date().toLocaleString("pt-BR");
+    setLogs((prev) => [{ id: `L-${Date.now()}`, date, actor, action, module }, ...prev]);
+  };
+
+  const filteredLogs = useMemo(() => {
+    if (!logSearch.trim()) return logs;
+    const term = logSearch.toLowerCase();
+    return logs.filter((l) => `${l.actor} ${l.action} ${l.module}`.toLowerCase().includes(term));
+  }, [logs, logSearch]);
+
+  const saveAll = () => {
+    const payload = { users, matrix, templates, rules, integrations, security, notifications, lgpd, company };
+    localStorage.setItem("certifica:settings", JSON.stringify(payload));
+    const now = new Date().toLocaleString("pt-BR");
+    setSaveStamp(now);
+    addLog("Salvou configuracoes globais", "Configuracoes");
+  };
+
+  const loadAll = () => {
+    try {
+      const raw = localStorage.getItem("certifica:settings");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        users: UserItem[];
+        matrix: typeof matrix;
+        templates: TemplateItem[];
+        rules: WorkflowRule[];
+        integrations: IntegrationItem[];
+        security: typeof security;
+        notifications: typeof notifications;
+        lgpd: typeof lgpd;
+        company: typeof company;
+      };
+      setUsers(parsed.users ?? initialUsers);
+      setMatrix(parsed.matrix ?? initialMatrix);
+      setTemplates(parsed.templates ?? initialTemplates);
+      setRules(parsed.rules ?? initialRules);
+      setIntegrations(parsed.integrations ?? initialIntegrations);
+      setSecurity(parsed.security ?? security);
+      setNotifications(parsed.notifications ?? notifications);
+      setLgpd(parsed.lgpd ?? lgpd);
+      setCompany(parsed.company ?? company);
+      addLog("Carregou configuracoes salvas", "Configuracoes");
+    } catch {
+      // noop
+    }
+  };
+
+  const renderUsuarios = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Usuarios e perfis</span>}>
+        <div className="space-y-2">
+          {users.map((u) => (
+            <div key={u.id} className="border border-certifica-200 rounded-[4px] px-3 py-2 flex items-center justify-between">
+              <div>
+                <div className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>{u.name}</div>
+                <div className="text-[10.5px] text-certifica-500">{u.email}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <DSBadge variant={u.status === "ativo" ? "conformidade" : "outline"}>{u.status}</DSBadge>
+                <DSSelect
+                  label=""
+                  value={u.role}
+                  onChange={(e) => {
+                    const role = e.target.value as Role;
+                    setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role } : x)));
+                    addLog(`Alterou perfil de ${u.name} para ${role}`, "Usuarios");
+                  }}
+                  options={roles.map((r) => ({ value: r, label: r }))}
+                  className="h-7 text-[11px]"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Adicionar usuario</span>}>
+        <div className="grid grid-cols-3 gap-2">
+          <DSInput label="Nome" value={newUser.name} onChange={(e) => setNewUser((p) => ({ ...p, name: e.target.value }))} />
+          <DSInput label="E-mail" value={newUser.email} onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))} />
+          <DSSelect label="Perfil" value={newUser.role} onChange={(e) => setNewUser((p) => ({ ...p, role: e.target.value as Role }))} options={roles.map((r) => ({ value: r, label: r }))} />
+        </div>
+        <div className="flex justify-end mt-3">
+          <DSButton
+            size="sm"
+            icon={<Plus className="w-3 h-3" strokeWidth={1.5} />}
+            onClick={() => {
+              if (!newUser.name.trim() || !newUser.email.trim()) return;
+              const user: UserItem = { id: `U-${Date.now()}`, name: newUser.name.trim(), email: newUser.email.trim(), role: newUser.role, status: "ativo" };
+              setUsers((prev) => [user, ...prev]);
+              setNewUser({ name: "", email: "", role: "consultor" });
+              addLog(`Criou usuario ${user.name}`, "Usuarios");
+            }}
+          >
+            Criar usuario
+          </DSButton>
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Notificacoes e preferencias</span>}>
+        <div className="grid grid-cols-2 gap-2 text-[12px]">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={notifications.emailAlerts} onChange={(e) => setNotifications((p) => ({ ...p, emailAlerts: e.target.checked }))} /> Alertas por e-mail</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={notifications.whatsappAlerts} onChange={(e) => setNotifications((p) => ({ ...p, whatsappAlerts: e.target.checked }))} /> Alertas por WhatsApp</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={notifications.digestDaily} onChange={(e) => setNotifications((p) => ({ ...p, digestDaily: e.target.checked }))} /> Digest diario</label>
+          <DSInput label="Lembrete antes do prazo (dias)" value={notifications.dueReminderDays} onChange={(e) => setNotifications((p) => ({ ...p, dueReminderDays: e.target.value }))} />
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderPermissoes = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Matriz de permissao por papel</span>}>
+        <div className="overflow-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-certifica-200">
+                <th className="text-left text-[11px] text-certifica-500 py-2">Modulo</th>
+                {roles.map((r) => (
+                  <th key={r} className="text-left text-[11px] text-certifica-500 py-2 capitalize">{r}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {modules.map((m) => (
+                <tr key={m} className="border-b border-certifica-200/70">
+                  <td className="py-2 text-[12px] text-certifica-900">{m}</td>
+                  {roles.map((r) => (
+                    <td key={`${m}-${r}`} className="py-2 pr-2">
+                      <select
+                        value={matrix[r][m]}
+                        onChange={(e) => {
+                          const level = e.target.value as PermissionLevel;
+                          setMatrix((prev) => ({ ...prev, [r]: { ...prev[r], [m]: level } }));
+                        }}
+                        className="h-7 w-full px-2 border border-certifica-200 rounded-[4px] text-[11px]"
+                      >
+                        <option value="nenhum">Nenhum</option>
+                        <option value="leitura">Leitura</option>
+                        <option value="edicao">Edicao</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Politicas de senha e seguranca</span>}>
+        <div className="grid grid-cols-2 gap-2">
+          <DSInput label="Tamanho minimo da senha" value={security.minLength} onChange={(e) => setSecurity((p) => ({ ...p, minLength: e.target.value }))} />
+          <DSInput label="Rotacao de senha (dias)" value={security.rotationDays} onChange={(e) => setSecurity((p) => ({ ...p, rotationDays: e.target.value }))} />
+          <DSInput label="Timeout de sessao (min)" value={security.sessionTimeout} onChange={(e) => setSecurity((p) => ({ ...p, sessionTimeout: e.target.value }))} />
+          <label className="text-[12px] text-certifica-dark flex items-end pb-2 gap-2">
+            <input type="checkbox" checked={security.force2fa} onChange={(e) => setSecurity((p) => ({ ...p, force2fa: e.target.checked }))} />
+            Exigir 2FA para perfis criticos
+          </label>
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderEmpresa = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Parametros da empresa</span>}>
+        <div className="grid grid-cols-2 gap-2">
+          <DSInput label="Razao social" value={company.legalName} onChange={(e) => setCompany((p) => ({ ...p, legalName: e.target.value }))} />
+          <DSInput label="CNPJ" value={company.cnpj} onChange={(e) => setCompany((p) => ({ ...p, cnpj: e.target.value }))} />
+          <DSInput label="Timezone" value={company.timezone} onChange={(e) => setCompany((p) => ({ ...p, timezone: e.target.value }))} />
+          <DSInput label="Idioma padrao" value={company.language} onChange={(e) => setCompany((p) => ({ ...p, language: e.target.value }))} />
+          <DSInput label="Norma padrao" value={company.defaultNorm} onChange={(e) => setCompany((p) => ({ ...p, defaultNorm: e.target.value }))} className="col-span-2" />
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>LGPD</span>}>
+        <div className="grid grid-cols-2 gap-2">
+          <DSInput label="Retencao de dados (meses)" value={lgpd.retentionMonths} onChange={(e) => setLgpd((p) => ({ ...p, retentionMonths: e.target.value }))} />
+          <DSInput label="Anonimizacao apos (meses)" value={lgpd.anonymizeAfter} onChange={(e) => setLgpd((p) => ({ ...p, anonymizeAfter: e.target.value }))} />
+          <DSInput label="Versao termo de consentimento" value={lgpd.consentVersion} onChange={(e) => setLgpd((p) => ({ ...p, consentVersion: e.target.value }))} className="col-span-2" />
+          <DSTextarea label="Texto de consentimento" value={lgpd.consentText} onChange={(e) => setLgpd((p) => ({ ...p, consentText: e.target.value }))} className="col-span-2" />
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderModelos = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Modelos de documento</span>}>
+        <div className="space-y-2">
+          {templates.map((t) => (
+            <div key={t.id} className="border border-certifica-200 rounded-[4px] px-3 py-2 flex items-center justify-between">
+              <div>
+                <div className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>{t.name}</div>
+                <div className="text-[10.5px] text-certifica-500">{t.category}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-certifica-500 flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={t.active}
+                    onChange={(e) => {
+                      setTemplates((prev) => prev.map((x) => (x.id === t.id ? { ...x, active: e.target.checked } : x)));
+                      addLog(`Atualizou modelo ${t.name}`, "Modelos");
+                    }}
+                  />
+                  Ativo
+                </label>
+                <button
+                  className="p-1 text-certifica-500 hover:text-nao-conformidade"
+                  onClick={() => {
+                    setTemplates((prev) => prev.filter((x) => x.id !== t.id));
+                    addLog(`Removeu modelo ${t.name}`, "Modelos");
+                  }}
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Novo modelo</span>}>
+        <div className="grid grid-cols-2 gap-2">
+          <DSInput label="Nome do modelo" value={newTemplate.name} onChange={(e) => setNewTemplate((p) => ({ ...p, name: e.target.value }))} />
+          <DSInput label="Categoria" value={newTemplate.category} onChange={(e) => setNewTemplate((p) => ({ ...p, category: e.target.value }))} />
+        </div>
+        <div className="flex justify-end mt-3">
+          <DSButton
+            size="sm"
+            onClick={() => {
+              if (!newTemplate.name.trim() || !newTemplate.category.trim()) return;
+              const item: TemplateItem = { id: `T-${Date.now()}`, name: newTemplate.name.trim(), category: newTemplate.category.trim(), active: true };
+              setTemplates((prev) => [item, ...prev]);
+              setNewTemplate({ name: "", category: "" });
+              addLog(`Criou modelo ${item.name}`, "Modelos");
+            }}
+          >
+            Criar modelo
+          </DSButton>
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderWorkflow = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Regras de workflow</span>}>
+        <div className="space-y-2">
+          {rules.map((r) => (
+            <div key={r.id} className="border border-certifica-200 rounded-[4px] px-3 py-2">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>{r.name}</div>
+                <DSBadge variant={r.active ? "conformidade" : "outline"}>{r.active ? "ativo" : "inativo"}</DSBadge>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <DSInput
+                  label="Etapa"
+                  value={r.stage}
+                  onChange={(e) => setRules((prev) => prev.map((x) => (x.id === r.id ? { ...x, stage: e.target.value } : x)))}
+                />
+                <DSInput
+                  label="SLA (horas)"
+                  value={String(r.slaHours)}
+                  onChange={(e) => setRules((prev) => prev.map((x) => (x.id === r.id ? { ...x, slaHours: Number(e.target.value || 0) } : x)))}
+                />
+                <label className="text-[11px] text-certifica-500 flex items-end pb-2 gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={r.autoAction}
+                    onChange={(e) => setRules((prev) => prev.map((x) => (x.id === r.id ? { ...x, autoAction: e.target.checked } : x)))}
+                  />
+                  Automacao
+                </label>
+                <label className="text-[11px] text-certifica-500 flex items-end pb-2 gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={r.active}
+                    onChange={(e) => setRules((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: e.target.checked } : x)))}
+                  />
+                  Regra ativa
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+      </DSCard>
+
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>SLA e automacoes configuraveis</span>}>
+        <div className="text-[12px] text-certifica-500">
+          Total de regras ativas: <strong className="text-certifica-900">{rules.filter((r) => r.active).length}</strong> ·
+          Automacoes ligadas: <strong className="text-certifica-900">{rules.filter((r) => r.autoAction).length}</strong> ·
+          SLA medio: <strong className="text-certifica-900">{Math.round(rules.reduce((acc, r) => acc + r.slaHours, 0) / rules.length)}h</strong>
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderIntegracoes = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Integracoes</span>}>
+        <div className="space-y-2">
+          {integrations.map((i) => (
+            <div key={i.id} className="border border-certifica-200 rounded-[4px] px-3 py-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>{i.name}</div>
+                  <div className="text-[10.5px] text-certifica-500">Conta: {i.account || "Nao configurada"} · Ult. sync: {i.lastSync}</div>
+                </div>
+                <label className="text-[11px] text-certifica-500 flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={i.connected}
+                    onChange={(e) => {
+                      const connected = e.target.checked;
+                      setIntegrations((prev) => prev.map((x) => (x.id === i.id ? { ...x, connected } : x)));
+                      addLog(`${connected ? "Conectou" : "Desconectou"} ${i.name}`, "Integracoes");
+                    }}
+                  />
+                  Conectado
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  const renderLogs = () => (
+    <div className="space-y-4">
+      <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Logs/auditoria do sistema</span>}>
+        <DSInput label="Buscar log" value={logSearch} onChange={(e) => setLogSearch(e.target.value)} placeholder="ator, acao, modulo..." />
+        <div className="space-y-1.5 mt-3">
+          {filteredLogs.map((l) => (
+            <div key={l.id} className="border border-certifica-200 rounded-[3px] px-2.5 py-1.5 text-[11px] text-certifica-500">
+              {l.date} · <span className="text-certifica-dark">{l.actor}</span> · {l.action} · {l.module}
+            </div>
+          ))}
+        </div>
+      </DSCard>
+    </div>
+  );
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex items-end justify-between">
+        <div>
+          <h2 className="text-certifica-900">Configuracoes</h2>
+          <p className="text-[12px] text-certifica-500 mt-0.5">
+            Governanca completa: usuarios, permissoes, workflow, seguranca, LGPD e auditoria do sistema.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <DSButton variant="outline" size="sm" icon={<Database className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={loadAll}>
+            Carregar
+          </DSButton>
+          <DSButton variant="primary" size="sm" icon={<Save className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={saveAll}>
+            Salvar configuracoes
+          </DSButton>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-5 gap-3">
+        <DSCard>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-certifica-500">Usuarios ativos</span>
+            <Shield className="w-3.5 h-3.5 text-conformidade" strokeWidth={1.5} />
+          </div>
+          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>{users.filter((u) => u.status === "ativo").length}</div>
+        </DSCard>
+        <DSCard>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-certifica-500">Integracoes ativas</span>
+            <CalendarClock className="w-3.5 h-3.5 text-observacao" strokeWidth={1.5} />
+          </div>
+          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>{integrations.filter((i) => i.connected).length}</div>
+        </DSCard>
+        <DSCard>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-certifica-500">Regras SLA ativas</span>
+            <CalendarClock className="w-3.5 h-3.5 text-certifica-accent" strokeWidth={1.5} />
+          </div>
+          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>{rules.filter((r) => r.active).length}</div>
+        </DSCard>
+        <DSCard>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-certifica-500">Politica 2FA</span>
+            <Lock className="w-3.5 h-3.5 text-conformidade" strokeWidth={1.5} />
+          </div>
+          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>{security.force2fa ? "ON" : "OFF"}</div>
+        </DSCard>
+        <DSCard>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-certifica-500">Ultimo save</span>
+            <Bell className="w-3.5 h-3.5 text-certifica-500" strokeWidth={1.5} />
+          </div>
+          <div className="text-[12px] text-certifica-900 mt-2" style={{ fontWeight: 600 }}>{saveStamp || "Nao salvo"}</div>
+        </DSCard>
+      </div>
+
+      <div className="bg-white border border-certifica-200 rounded-[4px] p-2 flex flex-wrap gap-1.5">
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setTab(item.id)}
+            className={`h-8 px-3 rounded-[4px] text-[11px] border ${tab === item.id ? "bg-certifica-accent text-white border-certifica-accent" : "border-certifica-200 text-certifica-500 hover:bg-certifica-50"}`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "usuarios" && renderUsuarios()}
+      {tab === "permissoes" && renderPermissoes()}
+      {tab === "empresa" && renderEmpresa()}
+      {tab === "modelos" && renderModelos()}
+      {tab === "workflow" && renderWorkflow()}
+      {tab === "integracoes" && renderIntegracoes()}
+      {tab === "logs" && renderLogs()}
+    </div>
+  );
+}

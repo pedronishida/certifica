@@ -1,0 +1,832 @@
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
+import logoImg from "../../assets/logo-certifica-dark.png";
+import {
+  LayoutDashboard,
+  ClipboardCheck,
+  Users,
+  FolderKanban,
+  GraduationCap,
+  FolderOpen,
+  BarChart3,
+  Settings,
+  ChevronRight,
+  ChevronDown,
+  Bell,
+  Search,
+  LogOut,
+  Award,
+  HelpCircle,
+  Video,
+  MessageSquare,
+  X,
+  Check,
+  CheckCheck,
+  Keyboard,
+  BookOpen,
+  Loader2,
+  AlertTriangle,
+  Info,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
+import { useGlobalSearch, type SearchResult } from "../lib/useGlobalSearch";
+import { useNotifications } from "../lib/useNotifications";
+import { useRBAC } from "../lib/useRBAC";
+import { ErrorBoundary } from "./ErrorBoundary";
+
+/* ── Types ── */
+interface NavItem {
+  path?: string;
+  label: string;
+  icon: React.ElementType;
+  children?: { path: string; label: string }[];
+}
+
+/* ── Navigation config ── */
+const navItems: NavItem[] = [
+  { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/reunioes", label: "Reuniões", icon: Video },
+  { path: "/chat", label: "Chat", icon: MessageSquare },
+  { path: "/clientes", label: "Clientes", icon: Users },
+  {
+    label: "Projetos",
+    icon: FolderKanban,
+    children: [
+      { path: "/projetos", label: "Visão Geral" },
+      { path: "/projetos/pipeline", label: "Kanban" },
+    ],
+  },
+  { path: "/documentos", label: "Documentos", icon: FolderOpen },
+  {
+    label: "Auditorias",
+    icon: ClipboardCheck,
+    children: [
+      { path: "/auditorias", label: "Painel" },
+      { path: "/auditorias/rai", label: "Relatório (RAI)" },
+    ],
+  },
+  { path: "/normas", label: "Normas", icon: Award },
+  { path: "/treinamentos", label: "Treinamentos", icon: GraduationCap },
+];
+
+const bottomItems = [
+  { path: "/relatorios", label: "Relatórios", icon: BarChart3 },
+  { path: "/configuracoes", label: "Configurações", icon: Settings },
+];
+
+/* ── Sidebar dimensions ── */
+const COLLAPSED_W = 56;
+const EXPANDED_W = 224;
+const TRANSITION = "280ms cubic-bezier(0.4, 0, 0.2, 1)";
+
+const textStyle = (open: boolean): React.CSSProperties => ({
+  opacity: open ? 1 : 0,
+  maxWidth: open ? 160 : 0,
+  transition: `opacity ${TRANSITION}, max-width ${TRANSITION}`,
+  overflow: "hidden",
+  whiteSpace: "nowrap" as const,
+});
+
+/* ── Helpers ── */
+const LAST_ROUTE_KEY = "certifica_last_route";
+
+const typeIcons: Record<SearchResult["type"], React.ElementType> = {
+  cliente: Users,
+  projeto: FolderKanban,
+  documento: FolderOpen,
+  auditoria: ClipboardCheck,
+  treinamento: GraduationCap,
+  norma: Award,
+};
+
+const typeLabels: Record<SearchResult["type"], string> = {
+  cliente: "Cliente",
+  projeto: "Projeto",
+  documento: "Documento",
+  auditoria: "Auditoria",
+  treinamento: "Treinamento",
+  norma: "Norma",
+};
+
+const notifIcons: Record<string, React.ElementType> = {
+  info: Info,
+  alerta: AlertTriangle,
+  urgente: AlertCircle,
+  sucesso: CheckCircle2,
+};
+
+const notifColors: Record<string, string> = {
+  info: "text-blue-500",
+  alerta: "text-amber-500",
+  urgente: "text-red-500",
+  sucesso: "text-emerald-500",
+};
+
+const SHORTCUTS = [
+  { keys: ["Ctrl", "K"], desc: "Busca global" },
+  { keys: ["Ctrl", "1"], desc: "Dashboard" },
+  { keys: ["Ctrl", "2"], desc: "Clientes" },
+  { keys: ["Ctrl", "3"], desc: "Projetos" },
+  { keys: ["Ctrl", "4"], desc: "Documentos" },
+  { keys: ["Ctrl", "5"], desc: "Auditorias" },
+  { keys: ["Esc"], desc: "Fechar painel/modal" },
+];
+
+const DOCS = [
+  { title: "Guia de Início Rápido", desc: "Primeiros passos com a plataforma" },
+  { title: "Gestão de Clientes", desc: "Como cadastrar e gerenciar clientes" },
+  { title: "Pipeline Kanban", desc: "Organizando o fluxo de projetos" },
+  { title: "Auditorias e RAI", desc: "Conduzindo auditorias internas" },
+  { title: "Normas e Certificações", desc: "Referência de normas ISO/NR" },
+  { title: "Relatórios", desc: "Gerando relatórios personalizados" },
+];
+
+export default function AppLayout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* ── Hooks ── */
+  const globalSearch = useGlobalSearch();
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
+  const { profile, canAccess, logout, initials } = useRBAC();
+
+  /* ── UI state ── */
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  /* ── Route persistence ── */
+  useEffect(() => {
+    localStorage.setItem(LAST_ROUTE_KEY, location.pathname);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(LAST_ROUTE_KEY);
+    if (saved && saved !== "/" && saved !== location.pathname) {
+      navigate(saved, { replace: true });
+    }
+    // only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── Keyboard shortcuts ── */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSearchFocused(false);
+        setNotifOpen(false);
+        setHelpOpen(false);
+        globalSearch.clear();
+        searchRef.current?.blur();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        setSearchFocused(true);
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey) {
+        const routeMap: Record<string, string> = {
+          "1": "/",
+          "2": "/clientes",
+          "3": "/projetos",
+          "4": "/documentos",
+          "5": "/auditorias",
+        };
+        if (routeMap[e.key]) {
+          e.preventDefault();
+          navigate(routeMap[e.key]);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [navigate, globalSearch]);
+
+  /* ── Click outside ── */
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  /* ── Sidebar hover ── */
+  const handleMouseEnter = useCallback(() => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setIsOpen(true);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    closeTimer.current = setTimeout(() => setIsOpen(false), 200);
+  }, []);
+
+  /* Section expand logic */
+  const getExpandedSections = () => {
+    const expanded = new Set(expandedSections);
+    navItems.forEach((item) => {
+      if (item.children?.some((c) => location.pathname === c.path || location.pathname.startsWith(c.path + "/"))) {
+        expanded.add(item.label);
+      }
+    });
+    return [...expanded];
+  };
+
+  const activeExpanded = getExpandedSections();
+
+  const toggleSection = (label: string) => {
+    setExpandedSections((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+    );
+  };
+
+  const isChildActive = (item: NavItem) =>
+    item.children?.some((c) => location.pathname === c.path || location.pathname.startsWith(c.path + "/"));
+
+  /* ── RBAC filtering ── */
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.path) return canAccess(item.path);
+    if (item.children) return item.children.some((c) => canAccess(c.path));
+    return true;
+  });
+
+  const filteredBottomItems = bottomItems.filter((item) => canAccess(item.path));
+
+  /* ── Search result click ── */
+  const handleSearchSelect = (result: SearchResult) => {
+    navigate(result.path);
+    globalSearch.clear();
+    setSearchFocused(false);
+    searchRef.current?.blur();
+  };
+
+  /* ── Render helpers ── */
+  const renderNavItem = (item: NavItem) => {
+    if (item.children) {
+      const visibleChildren = item.children.filter((c) => canAccess(c.path));
+      if (visibleChildren.length === 0) return null;
+
+      const sectionOpen = activeExpanded.includes(item.label);
+      const showChildren = sectionOpen && isOpen;
+      const hasActiveChild = isChildActive(item);
+      return (
+        <div key={item.label} className="mb-px relative group/parent">
+          <button
+            onClick={() => isOpen && toggleSection(item.label)}
+            className={`w-full flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] cursor-pointer ${
+              hasActiveChild
+                ? "text-certifica-accent-dark"
+                : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
+            }`}
+            style={{ transition: `background ${TRANSITION}` }}
+          >
+            <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
+            <span
+              className="text-[12.5px] flex-1 text-left"
+              style={{ ...textStyle(isOpen), fontWeight: hasActiveChild ? 500 : 400 }}
+            >
+              {item.label}
+            </span>
+            <ChevronDown
+              className={`w-3 h-3 flex-shrink-0 ${sectionOpen ? "" : "-rotate-90"}`}
+              strokeWidth={1.5}
+              style={{
+                opacity: isOpen ? 0.3 : 0,
+                maxWidth: isOpen ? 12 : 0,
+                transition: `opacity ${TRANSITION}, max-width ${TRANSITION}, transform 200ms ease`,
+                overflow: "hidden",
+              }}
+            />
+            <span
+              className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
+              style={{
+                opacity: !isOpen && hasActiveChild ? 1 : 0,
+                transition: `opacity ${TRANSITION}`,
+              }}
+            />
+          </button>
+          <div
+            className="overflow-hidden"
+            style={{
+              maxHeight: showChildren ? `${visibleChildren.length * 36}px` : 0,
+              opacity: showChildren ? 1 : 0,
+              transition: `max-height ${TRANSITION}, opacity ${TRANSITION}`,
+            }}
+          >
+            <div className="ml-[22px] border-l border-certifica-200 mt-px mb-1">
+              {visibleChildren.map((child) => {
+                const isActive = location.pathname === child.path;
+                return (
+                  <NavLink
+                    key={child.path}
+                    to={child.path}
+                    className={`flex items-center pl-3 py-[6px] rounded-r-[3px] whitespace-nowrap ${
+                      isActive
+                        ? "text-certifica-accent-dark bg-certifica-accent-light"
+                        : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-50"
+                    }`}
+                    style={{ transition: `background ${TRANSITION}, color ${TRANSITION}` }}
+                  >
+                    <span className="text-[12px]" style={{ fontWeight: isActive ? 500 : 400 }}>
+                      {child.label}
+                    </span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+          {!isOpen && (
+            <div
+              className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/parent:opacity-100 z-50 shadow-lg"
+              style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
+            >
+              {item.label}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const isActive = location.pathname === item.path;
+    return (
+      <div key={item.path} className="relative group/item mb-px">
+        <NavLink
+          to={item.path!}
+          className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] ${
+            isActive
+              ? "bg-certifica-accent-light text-certifica-accent-dark"
+              : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
+          }`}
+          style={{ transition: `background ${TRANSITION}` }}
+        >
+          <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
+          <span
+            className="text-[12.5px]"
+            style={{ ...textStyle(isOpen), fontWeight: isActive ? 500 : 400 }}
+          >
+            {item.label}
+          </span>
+          <span
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
+            style={{
+              opacity: !isOpen && isActive ? 1 : 0,
+              transition: `opacity ${TRANSITION}`,
+            }}
+          />
+        </NavLink>
+        {!isOpen && (
+          <div
+            className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/item:opacity-100 z-50 shadow-lg"
+            style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
+          >
+            {item.label}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const showSearchResults = searchFocused && globalSearch.query.length >= 2;
+
+  return (
+    <div className="flex h-screen w-full overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {/* ── Sidebar ── */}
+      <aside
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="flex-shrink-0 bg-white border-r border-certifica-200 flex flex-col overflow-hidden relative"
+        style={{
+          width: isOpen ? EXPANDED_W : COLLAPSED_W,
+          transition: `width ${TRANSITION}`,
+        }}
+      >
+        {/* Logo area */}
+        <div className="h-[52px] flex items-center border-b border-certifica-200 overflow-hidden flex-shrink-0 px-2.5">
+          <div
+            className="overflow-hidden flex-shrink-0 pl-[3px]"
+            style={{
+              width: isOpen ? 194 : 24,
+              transition: `width ${TRANSITION}`,
+            }}
+          >
+            <img src={logoImg} alt="Certifica Gestão de Sistemas" className="h-[30px] w-auto max-w-none" />
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2">
+          {filteredNavItems.map(renderNavItem)}
+
+          <div className="mt-3 pt-3 border-t border-certifica-200">
+            {filteredBottomItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <div key={item.path} className="relative group/bottom mb-px">
+                  <NavLink
+                    to={item.path}
+                    className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] ${
+                      isActive
+                        ? "bg-certifica-accent-light text-certifica-accent-dark"
+                        : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
+                    }`}
+                    style={{ transition: `background ${TRANSITION}` }}
+                  >
+                    <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
+                    <span
+                      className="text-[12.5px]"
+                      style={{ ...textStyle(isOpen), fontWeight: 400 }}
+                    >
+                      {item.label}
+                    </span>
+                    <span
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
+                      style={{
+                        opacity: !isOpen && isActive ? 1 : 0,
+                        transition: `opacity ${TRANSITION}`,
+                      }}
+                    />
+                  </NavLink>
+                  {!isOpen && (
+                    <div
+                      className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/bottom:opacity-100 z-50 shadow-lg"
+                      style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
+                    >
+                      {item.label}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </nav>
+
+        {/* User area */}
+        <div className="border-t border-certifica-200 flex-shrink-0">
+          <div className="flex items-center overflow-hidden px-2.5 py-2.5 gap-2">
+            <div
+              className="w-7 h-7 rounded-full bg-certifica-accent-light flex items-center justify-center text-[10px] text-certifica-accent-dark flex-shrink-0"
+              style={{ fontWeight: 600 }}
+            >
+              {initials}
+            </div>
+            <div
+              className="flex-1 min-w-0"
+              style={{
+                opacity: isOpen ? 1 : 0,
+                maxWidth: isOpen ? 120 : 0,
+                transition: `opacity ${TRANSITION}, max-width ${TRANSITION}`,
+                overflow: "hidden",
+              }}
+            >
+              <div className="text-[11.5px] text-certifica-dark truncate" style={{ fontWeight: 500 }}>
+                {profile?.nome ?? "Carregando..."}
+              </div>
+              {profile?.role_nome && (
+                <div className="text-[9.5px] text-certifica-500/60 truncate">{profile.role_nome}</div>
+              )}
+            </div>
+            <button
+              onClick={logout}
+              title="Sair"
+              className="text-certifica-500/40 hover:text-red-500 p-1 cursor-pointer flex-shrink-0"
+              style={{
+                opacity: isOpen ? 1 : 0,
+                maxWidth: isOpen ? 28 : 0,
+                transition: `opacity ${TRANSITION}, max-width ${TRANSITION}`,
+                overflow: "hidden",
+              }}
+            >
+              <LogOut className="w-3.5 h-3.5" strokeWidth={1.5} />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ── Main area ── */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header */}
+        <header className="h-[44px] flex-shrink-0 bg-white border-b border-certifica-200 flex items-center px-5 justify-between relative z-40">
+          <div className="flex items-center gap-1.5 text-[12px]">
+            <span className="text-certifica-accent" style={{ fontWeight: 500 }}>Certifica</span>
+            <ChevronRight className="w-3 h-3 text-certifica-500/40" strokeWidth={1.5} />
+            <span className="text-certifica-dark" style={{ fontWeight: 500 }}>
+              {getBreadcrumb(location.pathname)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* ── Global Search ── */}
+            <div ref={searchContainerRef} className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-certifica-500/40 z-10" strokeWidth={1.5} />
+              <input
+                ref={searchRef}
+                className={`h-7 pl-7 pr-8 bg-certifica-50 border rounded-[3px] text-[11.5px] text-certifica-dark placeholder:text-certifica-500/40 focus:outline-none focus:ring-1 focus:ring-certifica-accent/30 focus:border-certifica-accent/30 transition-all ${
+                  searchFocused ? "w-[320px] border-certifica-accent/30" : "w-[180px] border-certifica-200"
+                }`}
+                placeholder="Buscar... (Ctrl+K)"
+                style={{ fontWeight: 400 }}
+                value={globalSearch.query}
+                onChange={(e) => globalSearch.search(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+              />
+              {globalSearch.query && (
+                <button
+                  onClick={() => {
+                    globalSearch.clear();
+                    searchRef.current?.focus();
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-certifica-500/40 hover:text-certifica-500 z-10"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+
+              {/* Search Results Dropdown */}
+              {showSearchResults && (
+                <div className="absolute top-full right-0 mt-1 w-[400px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                  {globalSearch.loading ? (
+                    <div className="flex items-center justify-center gap-2 py-6 text-certifica-500/60">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-[12px]">Buscando...</span>
+                    </div>
+                  ) : globalSearch.results.length === 0 ? (
+                    <div className="py-6 text-center text-[12px] text-certifica-500/60">
+                      Nenhum resultado para "{globalSearch.query}"
+                    </div>
+                  ) : (
+                    <div className="max-h-[360px] overflow-y-auto">
+                      <div className="px-3 py-2 text-[10px] text-certifica-500/50 uppercase tracking-wider border-b border-certifica-100">
+                        {globalSearch.results.length} resultado{globalSearch.results.length !== 1 ? "s" : ""}
+                      </div>
+                      {globalSearch.results.map((r) => {
+                        const Icon = typeIcons[r.type];
+                        return (
+                          <button
+                            key={`${r.type}-${r.id}`}
+                            onClick={() => handleSearchSelect(r)}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-certifica-50 transition-colors text-left cursor-pointer"
+                          >
+                            <div className="w-7 h-7 rounded-md bg-certifica-accent-light flex items-center justify-center flex-shrink-0">
+                              <Icon className="w-3.5 h-3.5 text-certifica-accent-dark" strokeWidth={1.5} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] text-certifica-dark truncate" style={{ fontWeight: 500 }}>
+                                {r.title}
+                              </div>
+                              <div className="text-[10.5px] text-certifica-500/60 truncate">{r.subtitle}</div>
+                            </div>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-certifica-100 text-certifica-500/70 flex-shrink-0">
+                              {typeLabels[r.type]}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Notifications ── */}
+            <div ref={notifRef} className="relative">
+              <button
+                onClick={() => { setNotifOpen((p) => !p); setHelpOpen(false); }}
+                className="relative p-1.5 text-certifica-500/60 hover:text-certifica-dark transition-colors cursor-pointer"
+              >
+                <Bell className="w-4 h-4" strokeWidth={1.5} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center" style={{ fontWeight: 600 }}>
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notifications Dropdown */}
+              {notifOpen && (
+                <div className="absolute top-full right-0 mt-1 w-[380px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-certifica-100">
+                    <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>
+                      Notificações
+                    </span>
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={markAllAsRead}
+                        className="flex items-center gap-1 text-[11px] text-certifica-accent hover:text-certifica-accent-dark transition-colors cursor-pointer"
+                      >
+                        <CheckCheck className="w-3 h-3" />
+                        Marcar todas como lidas
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-[400px] overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="py-10 text-center text-[12px] text-certifica-500/60">
+                        Nenhuma notificação
+                      </div>
+                    ) : (
+                      notifications.map((n) => {
+                        const NIcon = notifIcons[n.tipo] || Info;
+                        const color = notifColors[n.tipo] || "text-gray-500";
+                        return (
+                          <div
+                            key={n.id}
+                            className={`flex items-start gap-3 px-4 py-3 hover:bg-certifica-50 transition-colors border-b border-certifica-50 ${
+                              !n.lida ? "bg-blue-50/40" : ""
+                            }`}
+                          >
+                            <NIcon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${color}`} strokeWidth={1.5} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-[12px] text-certifica-dark" style={{ fontWeight: n.lida ? 400 : 500 }}>
+                                  {n.titulo}
+                                </span>
+                                {!n.lida && (
+                                  <button
+                                    onClick={() => markAsRead(n.id)}
+                                    className="text-certifica-500/40 hover:text-certifica-accent flex-shrink-0 cursor-pointer"
+                                    title="Marcar como lida"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-certifica-500/60 mt-0.5 line-clamp-2">{n.mensagem}</div>
+                              <div className="text-[9.5px] text-certifica-500/40 mt-1">
+                                {formatRelativeTime(n.created_at)}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── Help Button ── */}
+            <button
+              onClick={() => { setHelpOpen((p) => !p); setNotifOpen(false); }}
+              className={`p-1.5 transition-colors cursor-pointer ${
+                helpOpen ? "text-certifica-accent" : "text-certifica-500/40 hover:text-certifica-500"
+              }`}
+            >
+              <HelpCircle className="w-4 h-4" strokeWidth={1.5} />
+            </button>
+          </div>
+        </header>
+
+        {/* ── Help Panel (slide-over) ── */}
+        {helpOpen && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/20 z-40 transition-opacity"
+              onClick={() => setHelpOpen(false)}
+            />
+            <div className="fixed top-0 right-0 h-full w-[380px] bg-white shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-certifica-200">
+                <span className="text-[14px] text-certifica-dark" style={{ fontWeight: 600 }}>
+                  Central de Ajuda
+                </span>
+                <button
+                  onClick={() => setHelpOpen(false)}
+                  className="p-1 text-certifica-500/40 hover:text-certifica-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                {/* Shortcuts */}
+                <div className="px-5 py-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Keyboard className="w-4 h-4 text-certifica-accent" strokeWidth={1.5} />
+                    <span className="text-[12.5px] text-certifica-dark" style={{ fontWeight: 600 }}>
+                      Atalhos de Teclado
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {SHORTCUTS.map((s) => (
+                      <div key={s.desc} className="flex items-center justify-between">
+                        <span className="text-[11.5px] text-certifica-500">{s.desc}</span>
+                        <div className="flex items-center gap-1">
+                          {s.keys.map((k) => (
+                            <kbd
+                              key={k}
+                              className="px-1.5 py-0.5 bg-certifica-100 border border-certifica-200 rounded text-[10px] text-certifica-500 min-w-[24px] text-center"
+                              style={{ fontWeight: 500, fontFamily: "'Inter', monospace" }}
+                            >
+                              {k}
+                            </kbd>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-px bg-certifica-200 mx-5" />
+
+                {/* Documentation */}
+                <div className="px-5 py-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <BookOpen className="w-4 h-4 text-certifica-accent" strokeWidth={1.5} />
+                    <span className="text-[12.5px] text-certifica-dark" style={{ fontWeight: 600 }}>
+                      Documentação
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {DOCS.map((d) => (
+                      <button
+                        key={d.title}
+                        className="w-full text-left px-3 py-2.5 rounded-md hover:bg-certifica-50 transition-colors cursor-pointer"
+                      >
+                        <div className="text-[12px] text-certifica-dark" style={{ fontWeight: 500 }}>
+                          {d.title}
+                        </div>
+                        <div className="text-[10.5px] text-certifica-500/60 mt-0.5">{d.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-px bg-certifica-200 mx-5" />
+
+                {/* Version / Support */}
+                <div className="px-5 py-4">
+                  <div className="text-[11px] text-certifica-500/50 space-y-1">
+                    <p>Certifica v2.0.0</p>
+                    <p>Suporte: suporte@certifica.com.br</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto bg-certifica-50">
+          <ErrorBoundary fallbackMessage="Ocorreu um erro ao carregar esta página. Tente novamente.">
+            <div key={location.pathname} className="certifica-fade-in h-full">
+              <Outlet />
+            </div>
+          </ErrorBoundary>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function getBreadcrumb(pathname: string): string {
+  const map: Record<string, string> = {
+    "/": "Dashboard",
+    "/reunioes": "Reuniões",
+    "/chat": "Chat",
+    "/clientes": "Clientes",
+    "/projetos": "Projetos",
+    "/projetos/pipeline": "Kanban",
+    "/documentos": "Documentos",
+    "/normas": "Normas",
+    "/auditorias": "Auditorias",
+    "/auditorias/rai": "Relatório de Auditoria",
+    "/treinamentos": "Treinamentos",
+    "/relatorios": "Relatórios",
+    "/configuracoes": "Configurações",
+  };
+  return map[pathname] || "Certifica";
+}
+
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "Agora mesmo";
+  if (mins < 60) return `Há ${mins}min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `Há ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Há ${days}d`;
+  return new Date(iso).toLocaleDateString("pt-BR");
+}
