@@ -836,8 +836,8 @@ export default function PipelinePage() {
 
         {isCreateColumnOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setIsCreateColumnOpen(false)} />
-            <div className="relative w-full max-w-[520px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)]">
+            <div className="absolute inset-0 bg-certifica-dark/45 certifica-modal-backdrop" onClick={() => setIsCreateColumnOpen(false)} />
+            <div className="relative w-full max-w-[520px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
               <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
                 <div>
                   <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>Nova coluna</h3>
@@ -914,8 +914,8 @@ export default function PipelinePage() {
 
         {isCreateOpportunityOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setIsCreateOpportunityOpen(false)} />
-            <div className="relative w-full max-w-[620px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)]">
+            <div className="absolute inset-0 bg-certifica-dark/45 certifica-modal-backdrop" onClick={() => setIsCreateOpportunityOpen(false)} />
+            <div className="relative w-full max-w-[620px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
               <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
                 <div>
                   <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>Nova oportunidade</h3>

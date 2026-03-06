@@ -1033,9 +1033,9 @@ function NewProjectModal({ onClose, onCreate, clientesDisponiveis, saving }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-certifica-dark/40" onClick={onClose} />
+      <div className="absolute inset-0 bg-certifica-dark/40 certifica-modal-backdrop" onClick={onClose} />
 
-      <div className="relative bg-white rounded-[4px] border border-certifica-200 w-[620px] max-h-[88vh] flex flex-col">
+      <div className="relative bg-white rounded-[4px] border border-certifica-200 w-[620px] max-h-[88vh] flex flex-col certifica-modal-content">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-certifica-200 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">

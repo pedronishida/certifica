@@ -420,8 +420,8 @@ export default function TreinamentosPage() {
 
       {/* ── Enroll modal ───────────────────────────────────────────────────── */}
       {showEnrollModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setShowEnrollModal(false)}>
-          <div className="bg-white rounded-[6px] border border-certifica-200 w-[420px] shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center certifica-modal-backdrop" onClick={() => setShowEnrollModal(false)}>
+          <div className="bg-white rounded-[6px] border border-certifica-200 w-[420px] shadow-lg certifica-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>Matricular participante</span>
               <button onClick={() => setShowEnrollModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer">
@@ -487,8 +487,8 @@ export default function TreinamentosPage() {
 
       {/* ── Create training modal ──────────────────────────────────────────── */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setShowCreateModal(false)}>
-          <div className="bg-white rounded-[6px] border border-certifica-200 w-[480px] shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center certifica-modal-backdrop" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-white rounded-[6px] border border-certifica-200 w-[480px] shadow-lg certifica-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>Novo treinamento</span>
               <button onClick={() => setShowCreateModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer">

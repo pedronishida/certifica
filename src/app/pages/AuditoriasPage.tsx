@@ -546,10 +546,10 @@ export default function AuditoriasPage() {
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-certifica-dark/45"
+            className="absolute inset-0 bg-certifica-dark/45 certifica-modal-backdrop"
             onClick={() => setIsCreateModalOpen(false)}
           />
-          <div className="relative w-full max-w-[560px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)]">
+          <div className="relative w-full max-w-[560px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <div>
                 <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>
@@ -676,7 +676,7 @@ export default function AuditoriasPage() {
             className="absolute inset-0 bg-certifica-dark/45"
             onClick={() => setIsRaiModalOpen(false)}
           />
-          <div className="relative w-full max-w-[920px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)]">
+          <div className="relative w-full max-w-[920px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <div>
                 <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>

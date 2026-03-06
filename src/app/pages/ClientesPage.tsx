@@ -665,8 +665,8 @@ function ClientFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-certifica-dark/40" onClick={onClose} />
-      <div className="relative bg-white rounded-[4px] border border-certifica-200 w-[560px] max-h-[85vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
+      <div className="absolute inset-0 bg-certifica-dark/40 certifica-modal-backdrop" onClick={onClose} />
+      <div className="relative bg-white rounded-[4px] border border-certifica-200 w-[560px] max-h-[85vh] overflow-y-auto certifica-modal-content">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-certifica-200 flex items-center justify-between">
           <div className="flex items-center gap-2">

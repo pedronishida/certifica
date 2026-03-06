@@ -682,8 +682,8 @@ export default function NormasPage() {
 
       {/* Assign modal */}
       {showAssignModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setShowAssignModal(false)}>
-          <div className="bg-white rounded-[6px] border border-certifica-200 w-[440px] shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center certifica-modal-backdrop" onClick={() => setShowAssignModal(false)}>
+          <div className="bg-white rounded-[6px] border border-certifica-200 w-[440px] shadow-lg certifica-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>Vincular norma a empresa</span>
               <button onClick={() => setShowAssignModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer"><X className="w-4 h-4" /></button>

@@ -578,8 +578,8 @@ export default function RelatoriosPage() {
       {/* Schedule modal */}
       {showSchedule && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setShowSchedule(false)} />
-          <div className="relative w-full max-w-[480px] bg-white border border-certifica-200 rounded-[6px] shadow-lg">
+          <div className="absolute inset-0 bg-certifica-dark/45 certifica-modal-backdrop" onClick={() => setShowSchedule(false)} />
+          <div className="relative w-full max-w-[480px] bg-white border border-certifica-200 rounded-[6px] shadow-lg certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200">
               <h3 className="text-[14px] text-certifica-900" style={{ fontWeight: 600 }}>Agendar envio de relatório</h3>
             </div>

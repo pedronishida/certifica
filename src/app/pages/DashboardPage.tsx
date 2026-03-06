@@ -755,7 +755,7 @@ export default function DashboardPage() {
       {selectedKpi && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setSelectedKpi(null)} />
-          <div className="relative w-full max-w-[860px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative w-full max-w-[860px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <h3 className="text-[15px] text-certifica-900" style={{ fontWeight: 600 }}>Drill-down: {drillTitle}</h3>
               <button onClick={() => setSelectedKpi(null)} className="p-1 text-certifica-500/40 hover:text-certifica-700 cursor-pointer">
@@ -839,7 +839,7 @@ export default function DashboardPage() {
       {detailProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setDetailProject(null)} />
-          <div className="relative w-full max-w-[600px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative w-full max-w-[600px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <h3 className="text-[15px] text-certifica-900" style={{ fontWeight: 600 }}>{detailProject.codigo} — {detailProject.titulo}</h3>
               <button onClick={() => setDetailProject(null)} className="p-1 text-certifica-500/40 hover:text-certifica-700 cursor-pointer">
@@ -872,7 +872,7 @@ export default function DashboardPage() {
       {showNewProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setShowNewProject(false)} />
-          <div className="relative w-full max-w-[520px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative w-full max-w-[520px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)] certifica-modal-content">
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <h3 className="text-[15px] text-certifica-900" style={{ fontWeight: 600 }}>Novo Projeto</h3>
               <button onClick={() => setShowNewProject(false)} className="p-1 text-certifica-500/40 hover:text-certifica-700 cursor-pointer">
