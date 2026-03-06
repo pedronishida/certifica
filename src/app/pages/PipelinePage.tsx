@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useMemo } from "react";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { DSButton } from "../components/ds/DSButton";
+import { toast } from "sonner";
 import {
   Search,
   Filter,
@@ -33,9 +34,17 @@ import {
   Tag,
   Trash2,
 } from "lucide-react";
+import { usePipeline } from "../lib/usePipeline";
+import type { ColumnWithCards } from "../lib/usePipeline";
+import type {
+  PipelineColumn,
+  PipelineCard as DBPipelineCard,
+  PipelineColumnInsert,
+  PipelineCardInsert,
+} from "../lib/database.types";
 
 /* ══════════════════════════════════════════════════════════
-   Types
+   UI-layer types (kept identical so sub-components compile)
    ══════════════════════════════════════════════════════════ */
 
 interface Entregavel {
@@ -51,6 +60,7 @@ interface Contato {
   telefone: string;
 }
 
+/** Rich UI card — a superset of the DB card, mapped at render time */
 interface PipelineCard {
   id: string;
   codigo: string;
@@ -61,6 +71,9 @@ interface PipelineCard {
   clienteEndereco: string;
   contato: Contato;
   norma: string;
+  /** The DB column id this card lives in */
+  columnId: string;
+  /** Legacy numeric fase kept for colour/gantt helpers — derived from column position */
   fase: number;
   prioridade: "alta" | "media" | "baixa";
   consultor: string;
@@ -79,7 +92,8 @@ interface PipelineCard {
 }
 
 interface ColumnConfig {
-  id: number;
+  id: string;         // UUID from DB
+  numericId: number;  // positional index (0-based) kept for colour helpers
   label: string;
   sublabel: string;
   color: string;
@@ -112,212 +126,108 @@ interface CardMeta {
 const DND_TYPE = "KANBAN_CARD";
 
 /* ══════════════════════════════════════════════════════════
-   Column definitions
+   Colour helpers (keyed by positional index)
    ══════════════════════════════════════════════════════════ */
 
-const FASE_LABELS: Record<number, string> = {
-  0: "Proposta",
-  1: "Planejamento",
-  2: "Solucao",
-  3: "Verificacao",
-  4: "Acompanhamento",
-};
-
-const FASE_COLORS: Record<number, string> = {
-  0: "#6B7280",
-  1: "#274C77",
-  2: "#2B8EAD",
-  3: "#1F5E3B",
-  4: "#0E2A47",
-};
-
-/* ══════════════════════════════════════════════════════════
-   Mock data
-   ══════════════════════════════════════════════════════════ */
-
-const initialCards: PipelineCard[] = [
-  {
-    id: "PRJ-009", codigo: "PRJ-009", titulo: "Proposta — ISO 9001 + 14001 Integrado",
-    clienteNome: "Construtora Horizonte", clienteCnpj: "89.012.345/0001-67",
-    clienteSegmento: "Construcao Civil", clienteEndereco: "Rua das Palmeiras, 450 — Curitiba/PR",
-    contato: { nome: "Ricardo Mendes", cargo: "Diretor de Operacoes", email: "ricardo@horizonte.com.br", telefone: "(41) 99876-5432" },
-    norma: "ISO 9001 + 14001", fase: 0, prioridade: "media",
-    consultor: "Carlos Silva", equipe: ["Carlos Silva", "Roberto Lima"],
-    inicio: "—", previsao: "—", valor: "R$ 72.000,00", condicoesPagamento: "A definir",
-    escopo: "Sistema integrado de Qualidade e Meio Ambiente para construtora — foco em obras civis e gestao de residuos de construcao.",
-    entregaveis: [
-      { id: "e41", texto: "Diagnostico integrado Q+MA", concluido: false },
-      { id: "e42", texto: "Mapeamento de processos construtivos", concluido: false },
-      { id: "e43", texto: "Manual integrado (SGI)", concluido: false },
-      { id: "e44", texto: "PGRS para obras", concluido: false },
-      { id: "e45", texto: "Treinamentos Q+MA (24h)", concluido: false },
-      { id: "e46", texto: "Auditoria interna integrada", concluido: false },
-      { id: "e47", texto: "Acompanhamento na certificacao", concluido: false },
-    ],
-    totalDocumentos: 0, totalAuditorias: 0,
-    observacoes: "Proposta enviada em 14/02/2026. Aguardando retorno da diretoria.",
-    diasRestantes: -1, criadoEm: "10/02/2026",
-  },
-  {
-    id: "PRJ-002", codigo: "PRJ-002", titulo: "Implementacao ISO 14001:2015",
-    clienteNome: "Metalurgica Acoforte", clienteCnpj: "12.345.678/0001-90",
-    clienteSegmento: "Metalurgia", clienteEndereco: "Av. Industrial, 1200 — Pinhais/PR",
-    contato: { nome: "Fernando Alves", cargo: "Gerente Industrial", email: "fernando@acoforte.com.br", telefone: "(41) 3344-5566" },
-    norma: "ISO 14001:2015", fase: 1, prioridade: "media",
-    consultor: "Roberto Lima", equipe: ["Roberto Lima"],
-    inicio: "15/01/2026", previsao: "30/09/2026", valor: "R$ 38.000,00", condicoesPagamento: "4x de R$ 9.500,00",
-    escopo: "Sistema de Gestao Ambiental — levantamento de aspectos e impactos, definicao de programas ambientais.",
-    entregaveis: [
-      { id: "e8", texto: "Levantamento de aspectos e impactos ambientais", concluido: false },
-      { id: "e9", texto: "Matriz de requisitos legais", concluido: false },
-      { id: "e10", texto: "Programas de gestao ambiental", concluido: false },
-      { id: "e11", texto: "Manual do SGA", concluido: false },
-      { id: "e12", texto: "Auditoria interna", concluido: false },
-    ],
-    totalDocumentos: 8, totalAuditorias: 0,
-    observacoes: "Projeto complementar ao SGQ ja implementado.",
-    diasRestantes: 223, criadoEm: "10/01/2026",
-  },
-  {
-    id: "PRJ-004", codigo: "PRJ-004", titulo: "Seguranca Alimentar ISO 22000",
-    clienteNome: "AgroVale Alimentos", clienteCnpj: "34.567.890/0001-12",
-    clienteSegmento: "Alimentos", clienteEndereco: "Rod. BR-376, Km 42 — Campo Largo/PR",
-    contato: { nome: "Claudia Ribeiro", cargo: "Coord. de Qualidade", email: "claudia@agrovale.com.br", telefone: "(41) 3221-4455" },
-    norma: "ISO 22000:2018", fase: 1, prioridade: "media",
-    consultor: "Pedro Souza", equipe: ["Pedro Souza"],
-    inicio: "01/12/2025", previsao: "31/07/2026", valor: "R$ 45.000,00", condicoesPagamento: "5x de R$ 9.000,00",
-    escopo: "SGSA completo — APPCC, pre-requisitos, rastreabilidade e preparacao para certificacao.",
-    entregaveis: [
-      { id: "e18", texto: "Analise de perigos e pontos criticos (APPCC)", concluido: false },
-      { id: "e19", texto: "Programas de pre-requisitos (PPR)", concluido: false },
-      { id: "e20", texto: "Sistema de rastreabilidade", concluido: false },
-      { id: "e21", texto: "Manual SGSA", concluido: false },
-    ],
-    totalDocumentos: 22, totalAuditorias: 4, observacoes: "",
-    diasRestantes: 162, criadoEm: "20/11/2025",
-  },
-  {
-    id: "PRJ-003", codigo: "PRJ-003", titulo: "Gestao Energetica ISO 50001",
-    clienteNome: "Grupo Energis", clienteCnpj: "23.456.789/0001-01",
-    clienteSegmento: "Energia", clienteEndereco: "Rua Engenheiro Ostoja Roguski, 700 — Curitiba/PR",
-    contato: { nome: "Marcos Oliveira", cargo: "Diretor de Sustentabilidade", email: "marcos@energis.com.br", telefone: "(41) 3030-7788" },
-    norma: "ISO 50001:2018", fase: 2, prioridade: "alta",
-    consultor: "Ana Costa", equipe: ["Ana Costa", "Pedro Souza"],
-    inicio: "01/10/2025", previsao: "30/04/2026", valor: "R$ 62.000,00", condicoesPagamento: "Entrada 20% + 4x mensais",
-    escopo: "Implementacao do SGEn para reducao de consumo energetico e atendimento a meta de carbono neutro ate 2030.",
-    entregaveis: [
-      { id: "e13", texto: "Revisao energetica — baseline e EnPIs", concluido: true },
-      { id: "e14", texto: "Plano de acao energetico", concluido: true },
-      { id: "e15", texto: "Procedimentos do SGEn", concluido: false },
-      { id: "e16", texto: "Treinamento de equipe interna", concluido: false },
-      { id: "e17", texto: "Auditoria interna pre-certificacao", concluido: false },
-    ],
-    totalDocumentos: 18, totalAuditorias: 2,
-    observacoes: "Foco em reducao de 15% no consumo energetico em 12 meses.",
-    diasRestantes: 70, criadoEm: "15/09/2025",
-  },
-  {
-    id: "PRJ-007", codigo: "PRJ-007", titulo: "FSC Cadeia de Custodia",
-    clienteNome: "Madeireira Floresta Viva", clienteCnpj: "67.890.123/0001-45",
-    clienteSegmento: "Madeireiro", clienteEndereco: "Estrada Rural, Km 8 — Guarapuava/PR",
-    contato: { nome: "Jorge Pereira", cargo: "Gerente Florestal", email: "jorge@florestaviva.com.br", telefone: "(42) 3622-1133" },
-    norma: "FSC COC", fase: 2, prioridade: "baixa",
-    consultor: "Carlos Silva", equipe: ["Carlos Silva"],
-    inicio: "15/11/2025", previsao: "30/05/2026", valor: "R$ 22.000,00", condicoesPagamento: "2x de R$ 11.000,00",
-    escopo: "Certificacao FSC Chain of Custody para rastreabilidade de produtos madeireiros.",
-    entregaveis: [
-      { id: "e32", texto: "Diagnostico FSC COC", concluido: true },
-      { id: "e33", texto: "Procedimentos de cadeia de custodia", concluido: false },
-      { id: "e34", texto: "Treinamento da equipe", concluido: false },
-      { id: "e35", texto: "Auditoria pre-certificacao", concluido: false },
-    ],
-    totalDocumentos: 28, totalAuditorias: 5, observacoes: "",
-    diasRestantes: 100, criadoEm: "01/11/2025",
-  },
-  {
-    id: "PRJ-008", codigo: "PRJ-008", titulo: "Certificacao ISO 9001:2015",
-    clienteNome: "Siderurgica Parana", clienteCnpj: "78.901.234/0001-56",
-    clienteSegmento: "Siderurgia", clienteEndereco: "Rod. dos Minerios, 3200 — Araucaria/PR",
-    contato: { nome: "Patricia Lopes", cargo: "Gerente da Qualidade", email: "patricia@sidpr.com.br", telefone: "(41) 3614-8899" },
-    norma: "ISO 9001:2015", fase: 2, prioridade: "media",
-    consultor: "Ana Costa", equipe: ["Ana Costa"],
-    inicio: "01/09/2025", previsao: "30/04/2026", valor: "R$ 55.000,00", condicoesPagamento: "Entrada 30% + 5x mensais",
-    escopo: "SGQ completo — processos siderurgicos, controle de qualidade de aco, rastreabilidade de corridas.",
-    entregaveis: [
-      { id: "e36", texto: "Diagnostico e gap analysis", concluido: true },
-      { id: "e37", texto: "Mapeamento de processos", concluido: true },
-      { id: "e38", texto: "Documentacao do SGQ", concluido: false },
-      { id: "e39", texto: "Treinamentos", concluido: false },
-      { id: "e40", texto: "Auditoria interna", concluido: false },
-    ],
-    totalDocumentos: 8, totalAuditorias: 1,
-    observacoes: "Kick-off realizado em 20/02/2026.",
-    diasRestantes: 70, criadoEm: "20/08/2025",
-  },
-  {
-    id: "PRJ-001", codigo: "PRJ-001", titulo: "Certificacao ISO 9001:2015",
-    clienteNome: "Metalurgica Acoforte", clienteCnpj: "12.345.678/0001-90",
-    clienteSegmento: "Metalurgia", clienteEndereco: "Av. Industrial, 1200 — Pinhais/PR",
-    contato: { nome: "Fernando Alves", cargo: "Gerente Industrial", email: "fernando@acoforte.com.br", telefone: "(41) 3344-5566" },
-    norma: "ISO 9001:2015", fase: 3, prioridade: "alta",
-    consultor: "Carlos Silva", equipe: ["Carlos Silva", "Ana Costa"],
-    inicio: "01/06/2025", previsao: "15/03/2026", valor: "R$ 48.000,00", condicoesPagamento: "6x de R$ 8.000,00",
-    escopo: "Implementacao completa do SGQ conforme ISO 9001:2015, incluindo mapeamento de processos, documentacao do sistema, treinamentos e preparacao para auditoria de certificacao.",
-    entregaveis: [
-      { id: "e1", texto: "Diagnostico inicial e gap analysis", concluido: true },
-      { id: "e2", texto: "Mapeamento de processos (SIPOC + Fluxogramas)", concluido: true },
-      { id: "e3", texto: "Manual da Qualidade — MQ-001", concluido: true },
-      { id: "e4", texto: "Procedimentos operacionais (15 POs)", concluido: true },
-      { id: "e5", texto: "Treinamento de auditores internos (16h)", concluido: false },
-      { id: "e6", texto: "Auditoria interna pre-certificacao", concluido: false },
-      { id: "e7", texto: "Acompanhamento na auditoria certificadora", concluido: false },
-    ],
-    totalDocumentos: 34, totalAuditorias: 6,
-    observacoes: "Cliente altamente engajado. Previsao de auditoria certificadora com a BVQI em marco/2026.",
-    diasRestantes: 24, criadoEm: "15/05/2025",
-  },
-  {
-    id: "PRJ-006", codigo: "PRJ-006", titulo: "SGA — ISO 14001:2015",
-    clienteNome: "Plastiform Industrial", clienteCnpj: "56.789.012/0001-34",
-    clienteSegmento: "Plasticos", clienteEndereco: "Rua dos Polimeros, 88 — Sao Jose dos Pinhais/PR",
-    contato: { nome: "Luciana Barros", cargo: "Coord. Ambiental", email: "luciana@plastiform.com.br", telefone: "(41) 3283-4400" },
-    norma: "ISO 14001:2015", fase: 3, prioridade: "media",
-    consultor: "Roberto Lima", equipe: ["Roberto Lima", "Carlos Silva"],
-    inicio: "01/08/2025", previsao: "15/03/2026", valor: "R$ 32.000,00", condicoesPagamento: "3x de R$ 10.666,67",
-    escopo: "Implementacao completa do SGA para industria de transformacao plastica — gestao de residuos, efluentes e emissoes.",
-    entregaveis: [
-      { id: "e27", texto: "Levantamento ambiental", concluido: true },
-      { id: "e28", texto: "PGRS — Plano de Gestao de Residuos", concluido: true },
-      { id: "e29", texto: "Procedimentos do SGA", concluido: true },
-      { id: "e30", texto: "Auditoria interna", concluido: false },
-      { id: "e31", texto: "Acompanhamento na certificacao", concluido: false },
-    ],
-    totalDocumentos: 11, totalAuditorias: 2, observacoes: "",
-    diasRestantes: 24, criadoEm: "20/07/2025",
-  },
-  {
-    id: "PRJ-005", codigo: "PRJ-005", titulo: "SSO — ISO 45001:2018",
-    clienteNome: "TransLog Operacoes", clienteCnpj: "45.678.901/0001-23",
-    clienteSegmento: "Logistica", clienteEndereco: "Rod. Contorno Leste, Km 12 — Colombo/PR",
-    contato: { nome: "Anderson Moura", cargo: "Coord. de SSO", email: "anderson@translog.com.br", telefone: "(41) 3666-7788" },
-    norma: "ISO 45001:2018", fase: 4, prioridade: "alta",
-    consultor: "Maria Santos", equipe: ["Maria Santos"],
-    inicio: "01/05/2025", previsao: "28/02/2026", valor: "R$ 35.000,00", condicoesPagamento: "Quitado",
-    escopo: "Sistema de gestao de SSO com foco em operacoes logisticas — motoristas, armazenagem e operacao de empilhadeiras.",
-    entregaveis: [
-      { id: "e22", texto: "Identificacao de perigos e riscos", concluido: true },
-      { id: "e23", texto: "Procedimentos de SSO", concluido: true },
-      { id: "e24", texto: "Treinamentos obrigatorios", concluido: true },
-      { id: "e25", texto: "Auditoria interna", concluido: true },
-      { id: "e26", texto: "Acompanhamento pos-certificacao", concluido: false },
-    ],
-    totalDocumentos: 15, totalAuditorias: 3,
-    observacoes: "Prazo apertado — auditoria certificadora agendada para 28/02. NC menor identificada em EPIs.",
-    diasRestantes: 9, criadoEm: "15/04/2025",
-  },
+const FALLBACK_COLORS = [
+  "#6B7280", "#274C77", "#2B8EAD", "#1F5E3B", "#0E2A47",
+  "#7A1E1E", "#8C6A1F",
 ];
 
+const DEFAULT_PROBABILITIES = [20, 35, 55, 75, 90, 95, 100];
+const DEFAULT_SLA = [14, 10, 7, 5, 7, 7, 7];
+
 const consultores = ["Carlos Silva", "Ana Costa", "Pedro Souza", "Maria Santos", "Roberto Lima"];
+
+/* ══════════════════════════════════════════════════════════
+   DB → UI mapping helpers
+   ══════════════════════════════════════════════════════════ */
+
+/**
+ * The DB `description` field stores an optional JSON payload with the
+ * extended UI fields.  Falls back to sensible defaults when absent.
+ */
+function parseDescription(raw: string): Partial<PipelineCard> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+    // not JSON — treat as plain escopo text
+  }
+  return { escopo: raw || "" };
+}
+
+function dbColumnToConfig(col: PipelineColumn, index: number): ColumnConfig {
+  return {
+    id: col.id,
+    numericId: index,
+    label: col.title,
+    sublabel: "",
+    color: col.color || FALLBACK_COLORS[index % FALLBACK_COLORS.length],
+    wipLimit: col.wip_limit ?? 5,
+    slaDays: DEFAULT_SLA[index % DEFAULT_SLA.length],
+    probability: DEFAULT_PROBABILITIES[index % DEFAULT_PROBABILITIES.length],
+    collapsed: false,
+  };
+}
+
+function dbCardToUI(
+  card: DBPipelineCard,
+  columnNumericId: number,
+  columnId: string
+): PipelineCard {
+  const extra = parseDescription(card.description ?? "");
+  const due = card.due_date ? new Date(`${card.due_date}T00:00:00`) : null;
+  const previsao = due ? due.toLocaleDateString("pt-BR") : "—";
+  const diasRestantes = due
+    ? Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : -1;
+  const criadoEm = card.created_at
+    ? new Date(card.created_at).toLocaleDateString("pt-BR")
+    : "—";
+
+  return {
+    id: card.id,
+    codigo: (extra.codigo as string) || card.id.slice(0, 8).toUpperCase(),
+    titulo: card.title,
+    clienteNome: (extra.clienteNome as string) || card.title,
+    clienteCnpj: (extra.clienteCnpj as string) || "—",
+    clienteSegmento: (extra.clienteSegmento as string) || "A definir",
+    clienteEndereco: (extra.clienteEndereco as string) || "A definir",
+    contato: (extra.contato as Contato) || {
+      nome: card.assigned_to || "Contato principal",
+      cargo: "A definir",
+      email: "contato@empresa.com",
+      telefone: "(00) 00000-0000",
+    },
+    norma: (extra.norma as string) || (card.tags?.[0] ?? "—"),
+    columnId,
+    fase: columnNumericId,
+    prioridade: ((extra.prioridade as PipelineCard["prioridade"]) || "media"),
+    consultor: card.assigned_to || (extra.consultor as string) || "—",
+    equipe: (extra.equipe as string[]) || [card.assigned_to || "—"],
+    inicio: (extra.inicio as string) || criadoEm,
+    previsao,
+    valor: (extra.valor as string) || "R$ 0,00",
+    condicoesPagamento: (extra.condicoesPagamento as string) || "A definir",
+    escopo: (extra.escopo as string) || card.description || "",
+    entregaveis: (extra.entregaveis as Entregavel[]) || [],
+    totalDocumentos: (extra.totalDocumentos as number) ?? 0,
+    totalAuditorias: (extra.totalAuditorias as number) ?? 0,
+    observacoes: (extra.observacoes as string) || "",
+    diasRestantes,
+    criadoEm,
+  };
+}
+
+/**
+ * Serialises the extra UI fields that have no direct DB column into the
+ * `description` JSON payload, preserving the card title separately.
+ */
+function uiCardToDescription(card: Partial<PipelineCard> & { escopo?: string }): string {
+  const { titulo: _t, id: _i, columnId: _c, fase: _f, previsao: _p, diasRestantes: _d, criadoEm: _cr, ...rest } = card as any;
+  return JSON.stringify(rest);
+}
 
 /* ══════════════════════════════════════════════════════════
    Helpers
@@ -351,9 +261,7 @@ function parseBrDate(value: string): Date | null {
 
 function getDefaultCardMeta(card: PipelineCard): CardMeta {
   return {
-    comments: [
-      `Registro inicial da oportunidade ${card.codigo}.`,
-    ],
+    comments: [`Registro inicial da oportunidade ${card.codigo}.`],
     attachments: [],
     tags: [],
     activities: [
@@ -367,7 +275,32 @@ function getDefaultCardMeta(card: PipelineCard): CardMeta {
    ══════════════════════════════════════════════════════════ */
 
 export default function PipelinePage() {
-  const [cards, setCards] = useState<PipelineCard[]>(initialCards);
+  const {
+    columns: dbColumns,
+    loading,
+    error: pipelineError,
+    createColumn: dbCreateColumn,
+    createCard: dbCreateCard,
+    moveCard: dbMoveCard,
+    removeCard: dbRemoveCard,
+    removeColumn: dbRemoveColumn,
+  } = usePipeline();
+
+  /* ── Derived UI columns & cards ── */
+  const columns: ColumnConfig[] = useMemo(
+    () => dbColumns.map((col, i) => dbColumnToConfig(col, i)),
+    [dbColumns]
+  );
+
+  const cards: PipelineCard[] = useMemo(
+    () =>
+      dbColumns.flatMap((col, i) =>
+        col.cards.map((c) => dbCardToUI(c, i, col.id))
+      ),
+    [dbColumns]
+  );
+
+  /* ── Local UI state ── */
   const [searchQuery, setSearchQuery] = useState("");
   const [filterConsultor, setFilterConsultor] = useState("todos");
   const [filterPrioridade, setFilterPrioridade] = useState("todos");
@@ -375,24 +308,26 @@ export default function PipelinePage() {
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState<"kanban" | "gantt">("kanban");
   const [isCreateColumnOpen, setIsCreateColumnOpen] = useState(false);
-  const [editingColumnId, setEditingColumnId] = useState<number | null>(null);
   const [isCreateOpportunityOpen, setIsCreateOpportunityOpen] = useState(false);
-  const [targetColumnId, setTargetColumnId] = useState<number | null>(null);
+  const [targetColumnId, setTargetColumnId] = useState<string | null>(null);
   const boardScrollRef = useRef<HTMLDivElement>(null);
   const isBoardDraggingRef = useRef(false);
   const boardDragStartXRef = useRef(0);
   const boardDragStartScrollRef = useRef(0);
 
-  const [columns, setColumns] = useState<ColumnConfig[]>([
-    { id: 0, label: "Prospeccao", sublabel: "Leads iniciais", color: "#6B7280", wipLimit: 5, slaDays: 14, probability: 20, collapsed: false },
-    { id: 1, label: "Apresentacao", sublabel: "Diagnostico comercial", color: "#274C77", wipLimit: 4, slaDays: 10, probability: 35, collapsed: false },
-    { id: 2, label: "Proposta", sublabel: "Escopo e investimento", color: "#2B8EAD", wipLimit: 5, slaDays: 7, probability: 55, collapsed: false },
-    { id: 3, label: "Negociacao", sublabel: "Ajustes finais", color: "#1F5E3B", wipLimit: 3, slaDays: 5, probability: 75, collapsed: false },
-    { id: 4, label: "Follow up", sublabel: "Acompanhamento", color: "#0E2A47", wipLimit: 3, slaDays: 7, probability: 90, collapsed: false },
-  ]);
+  /** Local collapse state keyed by column DB id */
+  const [collapsedCols, setCollapsedCols] = useState<Record<string, boolean>>({});
+  /** Local column order (array of DB ids) — re-seeded when dbColumns changes */
+  const [colOrder, setColOrder] = useState<string[]>([]);
+  const effectiveOrder = useMemo(() => {
+    if (colOrder.length === columns.length && colOrder.every((id) => columns.find((c) => c.id === id))) {
+      return colOrder;
+    }
+    return columns.map((c) => c.id);
+  }, [colOrder, columns]);
+
   const columnPalette = ["#6B7280", "#274C77", "#2B8EAD", "#1F5E3B", "#0E2A47", "#7A1E1E", "#8C6A1F"];
-  const probabilityPalette = [20, 35, 55, 75, 90, 95, 100];
-  const slaPalette = [14, 10, 7, 5, 7, 7, 7];
+
   const [newColumnForm, setNewColumnForm] = useState({
     label: "",
     sublabel: "",
@@ -413,114 +348,93 @@ export default function PipelinePage() {
     contatoTelefone: "",
     previsao: "",
   });
-  const [cardMetaMap, setCardMetaMap] = useState<Record<string, CardMeta>>(() => {
-    const entries = initialCards.map((card) => [card.id, getDefaultCardMeta(card)] as const);
-    return Object.fromEntries(entries);
-  });
+  const [cardMetaMap, setCardMetaMap] = useState<Record<string, CardMeta>>({});
 
-  const moveCard = useCallback((cardId: string, toFase: number, targetIndex?: number) => {
-    setCards((prev) => {
-      const current = prev.find((c) => c.id === cardId);
-      if (!current) return prev;
-      if (current.fase === toFase && targetIndex === undefined) return prev;
+  /* ── Actions ── */
 
-      const fromLabel = columns.find((c) => c.id === current.fase)?.label ?? `Fase ${current.fase}`;
-      const toLabel = columns.find((c) => c.id === toFase)?.label ?? `Fase ${toFase}`;
+  const handleMoveCard = useCallback(
+    async (cardId: string, toColumnId: string, _targetIndex?: number) => {
+      const card = cards.find((c) => c.id === cardId);
+      if (!card) return;
+      if (card.columnId === toColumnId) return;
 
-      if (current.fase !== toFase) {
-        const at = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-        setCardMetaMap((metaPrev) => {
-          const base = metaPrev[cardId] ?? getDefaultCardMeta(current);
-          return {
-            ...metaPrev,
-            [cardId]: {
-              ...base,
-              activities: [
-                { id: `mv-${Date.now()}`, at, text: `Card movido de ${fromLabel} para ${toLabel}` },
-                ...base.activities,
-              ],
-            },
-          };
-        });
+      const fromColLabel = columns.find((c) => c.id === card.columnId)?.label ?? card.columnId;
+      const toColLabel = columns.find((c) => c.id === toColumnId)?.label ?? toColumnId;
+
+      const ok = await dbMoveCard(cardId, card.columnId, toColumnId);
+      if (!ok) {
+        toast.error("Erro ao mover o card.");
+        return;
       }
 
-      const without = prev.filter((c) => c.id !== cardId);
-      const updated = { ...current, fase: toFase };
+      const at = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      setCardMetaMap((prev) => {
+        const base = prev[cardId] ?? getDefaultCardMeta(card);
+        return {
+          ...prev,
+          [cardId]: {
+            ...base,
+            activities: [
+              { id: `mv-${Date.now()}`, at, text: `Card movido de ${fromColLabel} para ${toColLabel}` },
+              ...base.activities,
+            ],
+          },
+        };
+      });
 
-      if (targetIndex !== undefined) {
-        const colCards = without.filter((c) => c.fase === toFase);
-        const otherCards = without.filter((c) => c.fase !== toFase);
-        const idx = Math.min(targetIndex, colCards.length);
-        colCards.splice(idx, 0, updated);
-        return [...otherCards, ...colCards];
-      }
+      // Keep the detail overlay in sync
+      setSelectedCard((prev) => {
+        if (prev?.id !== cardId) return prev;
+        const toColNumericId = columns.findIndex((c) => c.id === toColumnId);
+        return { ...prev, columnId: toColumnId, fase: toColNumericId };
+      });
+    },
+    [cards, columns, dbMoveCard]
+  );
 
-      return [...without, updated];
-    });
-    setSelectedCard((prev) => (prev?.id === cardId ? { ...prev, fase: toFase } : prev));
-  }, [columns]);
-
+  /** Local-only update for the detail overlay fields (no DB write for now) */
   const updateCard = useCallback((cardId: string, patch: Partial<PipelineCard>) => {
-    setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...patch } : c)));
     setSelectedCard((prev) => (prev?.id === cardId ? { ...prev, ...patch } : prev));
   }, []);
 
   const updateCardMeta = useCallback((cardId: string, updater: (meta: CardMeta) => CardMeta) => {
     setCardMetaMap((prev) => {
-      const current = prev[cardId] ?? getDefaultCardMeta(cards.find((c) => c.id === cardId) ?? initialCards[0]);
-      return {
-        ...prev,
-        [cardId]: updater(current),
-      };
+      const card = cards.find((c) => c.id === cardId);
+      const current = prev[cardId] ?? getDefaultCardMeta(card ?? ({} as PipelineCard));
+      return { ...prev, [cardId]: updater(current) };
     });
   }, [cards]);
 
-  const toggleCollapse = (colId: number) => {
-    setColumns((prev) => prev.map((c) => (c.id === colId ? { ...c, collapsed: !c.collapsed } : c)));
+  const toggleCollapse = (colId: string) => {
+    setCollapsedCols((prev) => ({ ...prev, [colId]: !prev[colId] }));
   };
 
-  const moveColumnOrder = (colId: number, direction: "left" | "right") => {
-    setColumns((prev) => {
-      const idx = prev.findIndex((c) => c.id === colId);
-      if (idx < 0) return prev;
+  const moveColumnOrder = (colId: string, direction: "left" | "right") => {
+    setColOrder((prev) => {
+      const list = prev.length === columns.length ? [...prev] : columns.map((c) => c.id);
+      const idx = list.indexOf(colId);
+      if (idx < 0) return list;
       const target = direction === "left" ? idx - 1 : idx + 1;
-      if (target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[target]] = [next[target], next[idx]];
-      return next;
+      if (target < 0 || target >= list.length) return list;
+      [list[idx], list[target]] = [list[target], list[idx]];
+      return list;
     });
   };
 
-  const createColumn = () => {
+  const openCreateColumn = () => {
     const defaultColor = columnPalette[columns.length % columnPalette.length];
-    const defaultProbability = probabilityPalette[columns.length % probabilityPalette.length];
-    const defaultSla = slaPalette[columns.length % slaPalette.length];
-    setEditingColumnId(null);
     setNewColumnForm({
       label: "",
       sublabel: "",
       color: defaultColor,
       wipLimit: "5",
-      slaDays: String(defaultSla),
-      probability: String(defaultProbability),
+      slaDays: String(DEFAULT_SLA[columns.length % DEFAULT_SLA.length]),
+      probability: String(DEFAULT_PROBABILITIES[columns.length % DEFAULT_PROBABILITIES.length]),
     });
     setIsCreateColumnOpen(true);
   };
 
-  const editColumn = (column: ColumnConfig) => {
-    setEditingColumnId(column.id);
-    setNewColumnForm({
-      label: column.label,
-      sublabel: column.sublabel,
-      color: column.color,
-      wipLimit: String(column.wipLimit),
-      slaDays: String(column.slaDays),
-      probability: String(column.probability),
-    });
-    setIsCreateColumnOpen(true);
-  };
-
-  const openCreateOpportunity = (columnId: number) => {
+  const openCreateOpportunity = (columnId: string) => {
     setTargetColumnId(columnId);
     setNewOpportunityForm({
       clienteNome: "",
@@ -537,85 +451,49 @@ export default function PipelinePage() {
     setIsCreateOpportunityOpen(true);
   };
 
-  const submitCreateColumn = (e: React.FormEvent<HTMLFormElement>) => {
+  const submitCreateColumn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const label = newColumnForm.label.trim();
     if (!label) return;
     const wip = Number.parseInt(newColumnForm.wipLimit, 10);
     const wipLimit = Number.isFinite(wip) ? Math.max(0, Math.min(99, wip)) : 5;
-    const slaRaw = Number.parseInt(newColumnForm.slaDays, 10);
-    const slaDays = Number.isFinite(slaRaw) ? Math.max(1, Math.min(180, slaRaw)) : 7;
-    const probRaw = Number.parseInt(newColumnForm.probability, 10);
-    const probability = Number.isFinite(probRaw) ? Math.max(0, Math.min(100, probRaw)) : 50;
 
-    setColumns((prev) => {
-      if (editingColumnId !== null) {
-        return prev.map((col) =>
-          col.id === editingColumnId
-            ? {
-                ...col,
-                label,
-                sublabel: newColumnForm.sublabel.trim() || "Nova etapa",
-                color: newColumnForm.color,
-                wipLimit,
-                slaDays,
-                probability,
-              }
-            : col,
-        );
-      }
-      const nextId = prev.reduce((max, c) => Math.max(max, c.id), 0) + 1;
-      return [
-        ...prev,
-        {
-          id: nextId,
-          label,
-          sublabel: newColumnForm.sublabel.trim() || "Nova etapa",
-          color: newColumnForm.color,
-          wipLimit,
-          slaDays,
-          probability,
-          collapsed: false,
-        },
-      ];
-    });
-    setEditingColumnId(null);
+    const insertData: PipelineColumnInsert = {
+      title: label,
+      position: columns.length,
+      wip_limit: wipLimit,
+      color: newColumnForm.color,
+    };
+
+    const result = await dbCreateColumn(insertData);
+    if (!result) {
+      toast.error("Erro ao criar coluna.");
+      return;
+    }
+    toast.success(`Coluna "${label}" criada.`);
     setIsCreateColumnOpen(false);
   };
 
-  const submitCreateOpportunity = (e: React.FormEvent<HTMLFormElement>) => {
+  const submitCreateOpportunity = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (targetColumnId === null) return;
+    if (!targetColumnId) return;
 
     const clienteNome = newOpportunityForm.clienteNome.trim();
     const titulo = newOpportunityForm.titulo.trim();
     if (!clienteNome || !titulo) return;
 
     const createdAt = new Date();
-    const createdAtText = createdAt.toLocaleDateString("pt-BR");
+    const criadoEm = createdAt.toLocaleDateString("pt-BR");
 
-    let previsao = "—";
-    let diasRestantes = -1;
+    let due_date: string | undefined;
     if (newOpportunityForm.previsao) {
-      const dueDate = new Date(`${newOpportunityForm.previsao}T00:00:00`);
-      previsao = dueDate.toLocaleDateString("pt-BR");
-      diasRestantes = Math.ceil((dueDate.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+      due_date = newOpportunityForm.previsao; // ISO yyyy-mm-dd from <input type="date">
     }
 
     const rawValor = parseCurrency(newOpportunityForm.valor);
     const valor = formatCurrency(rawValor);
 
-    const nextCodeNumber = cards.reduce((max, card) => {
-      const match = card.codigo.match(/^PRJ-(\d+)$/);
-      if (!match) return max;
-      return Math.max(max, Number.parseInt(match[1], 10));
-    }, 0) + 1;
-
-    const codigo = `PRJ-${String(nextCodeNumber).padStart(3, "0")}`;
-    const newCard: PipelineCard = {
-      id: codigo,
-      codigo,
-      titulo,
+    const descriptionPayload: Partial<PipelineCard> = {
       clienteNome,
       clienteCnpj: "—",
       clienteSegmento: "A definir",
@@ -627,12 +505,10 @@ export default function PipelinePage() {
         telefone: newOpportunityForm.contatoTelefone.trim() || "(00) 00000-0000",
       },
       norma: newOpportunityForm.norma.trim() || "ISO 9001:2015",
-      fase: targetColumnId,
       prioridade: newOpportunityForm.prioridade,
       consultor: newOpportunityForm.consultor,
       equipe: [newOpportunityForm.consultor],
-      inicio: createdAtText,
-      previsao,
+      inicio: criadoEm,
       valor,
       condicoesPagamento: "A definir",
       escopo: titulo,
@@ -640,68 +516,70 @@ export default function PipelinePage() {
       totalDocumentos: 0,
       totalAuditorias: 0,
       observacoes: "",
-      diasRestantes,
-      criadoEm: createdAtText,
     };
-    setCards((prev) => [...prev, newCard]);
-    setCardMetaMap((prev) => ({ ...prev, [newCard.id]: getDefaultCardMeta(newCard) }));
 
+    const insertData: PipelineCardInsert = {
+      column_id: targetColumnId,
+      title: titulo,
+      description: JSON.stringify(descriptionPayload),
+      assigned_to: newOpportunityForm.consultor,
+      due_date: due_date ?? null,
+      tags: [newOpportunityForm.norma.trim() || "ISO 9001:2015"],
+      sla_days: 14,
+      position: cards.filter((c) => c.columnId === targetColumnId).length,
+    };
+
+    const result = await dbCreateCard(insertData);
+    if (!result) {
+      toast.error("Erro ao criar oportunidade.");
+      return;
+    }
+    toast.success(`Oportunidade "${titulo}" criada.`);
     setIsCreateOpportunityOpen(false);
     setTargetColumnId(null);
   };
 
-  const deleteColumn = (colId: number) => {
-    setColumns((prev) => {
-      if (prev.length <= 1) return prev;
-      const idx = prev.findIndex((c) => c.id === colId);
-      if (idx < 0) return prev;
-      const targetCol = prev[idx + 1] ?? prev[idx - 1];
-      if (!targetCol) return prev;
-
-      setCards((cardsPrev) => {
-        const movedCards = cardsPrev.filter((card) => card.fase === colId);
-        if (movedCards.length > 0) {
-          const fromLabel = prev[idx].label;
-          const toLabel = targetCol.label;
-          const at = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-          setCardMetaMap((metaPrev) => {
-            const nextMeta = { ...metaPrev };
-            movedCards.forEach((card) => {
-              const base = nextMeta[card.id] ?? getDefaultCardMeta(card);
-              nextMeta[card.id] = {
-                ...base,
-                activities: [
-                  { id: `mv-del-${Date.now()}-${card.id}`, at, text: `Card realocado automaticamente de ${fromLabel} para ${toLabel}` },
-                  ...base.activities,
-                ],
-              };
-            });
-            return nextMeta;
-          });
-        }
-        return cardsPrev.map((card) => (card.fase === colId ? { ...card, fase: targetCol.id } : card));
-      });
-      setSelectedCard((cardPrev) => (cardPrev?.fase === colId ? { ...cardPrev, fase: targetCol.id } : cardPrev));
-      return prev.filter((c) => c.id !== colId);
-    });
+  const deleteColumn = async (colId: string) => {
+    const col = columns.find((c) => c.id === colId);
+    if (!col) return;
+    if (columns.length <= 1) return;
+    const ok = await dbRemoveColumn(colId);
+    if (!ok) {
+      toast.error("Erro ao remover coluna.");
+      return;
+    }
+    toast.success(`Coluna "${col.label}" removida.`);
+    setColOrder((prev) => prev.filter((id) => id !== colId));
   };
 
+  /* ── Filtering ── */
   const filtered = cards.filter((c) => {
     if (filterConsultor !== "todos" && c.consultor !== filterConsultor) return false;
     if (filterPrioridade !== "todos" && c.prioridade !== filterPrioridade) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return c.titulo.toLowerCase().includes(q) || c.clienteNome.toLowerCase().includes(q) || c.norma.toLowerCase().includes(q) || c.codigo.toLowerCase().includes(q);
+      return (
+        c.titulo.toLowerCase().includes(q) ||
+        c.clienteNome.toLowerCase().includes(q) ||
+        c.norma.toLowerCase().includes(q) ||
+        c.codigo.toLowerCase().includes(q)
+      );
     }
     return true;
   });
+
+  const orderedColumns: ColumnConfig[] = useMemo(() => {
+    return effectiveOrder
+      .map((id) => columns.find((c) => c.id === id))
+      .filter(Boolean) as ColumnConfig[];
+  }, [effectiveOrder, columns]);
 
   const totalValor = filtered.reduce((s, c) => s + parseCurrency(c.valor), 0);
   const urgentes = filtered.filter((c) => c.diasRestantes > 0 && c.diasRestantes <= 30).length;
   const phaseForecast = useMemo(() => {
     const now = new Date();
-    return columns.map((col) => {
-      const colCards = filtered.filter((c) => c.fase === col.id);
+    return orderedColumns.map((col) => {
+      const colCards = filtered.filter((c) => c.columnId === col.id);
       const prob = col.probability / 100;
       const sla = col.slaDays;
       const expectedRevenue = colCards.reduce((sum, c) => sum + parseCurrency(c.valor) * prob, 0);
@@ -713,7 +591,7 @@ export default function PipelinePage() {
       }).length;
       return { colId: col.id, label: col.label, probability: prob, expectedRevenue, slaDays: sla, slaBreaches };
     });
-  }, [columns, filtered]);
+  }, [orderedColumns, filtered]);
   const totalExpectedRevenue = phaseForecast.reduce((sum, item) => sum + item.expectedRevenue, 0);
   const totalSlaBreaches = phaseForecast.reduce((sum, item) => sum + item.slaBreaches, 0);
 
@@ -721,10 +599,8 @@ export default function PipelinePage() {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, a, input, textarea, select, [data-kanban-card], [data-dnd-handle]")) return;
-
     const scroller = boardScrollRef.current;
     if (!scroller) return;
-
     e.preventDefault();
     isBoardDraggingRef.current = true;
     boardDragStartXRef.current = e.clientX;
@@ -735,7 +611,6 @@ export default function PipelinePage() {
     if (!isBoardDraggingRef.current) return;
     const scroller = boardScrollRef.current;
     if (!scroller) return;
-
     e.preventDefault();
     const deltaX = e.clientX - boardDragStartXRef.current;
     scroller.scrollLeft = boardDragStartScrollRef.current - deltaX;
@@ -744,6 +619,25 @@ export default function PipelinePage() {
   const handleBoardMouseUp = () => {
     isBoardDraggingRef.current = false;
   };
+
+  /* ── Loading / error states ── */
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center gap-3 bg-certifica-50/40">
+        <div className="w-6 h-6 border-2 border-certifica-accent/40 border-t-certifica-accent rounded-full animate-spin" />
+        <p className="text-[12px] text-certifica-500" style={{ fontWeight: 400 }}>Carregando pipeline...</p>
+      </div>
+    );
+  }
+
+  if (pipelineError) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center gap-3 bg-certifica-50/40">
+        <AlertTriangle className="w-6 h-6 text-nao-conformidade/70" strokeWidth={1.5} />
+        <p className="text-[12px] text-nao-conformidade" style={{ fontWeight: 500 }}>{pipelineError}</p>
+      </div>
+    );
+  }
 
   return (
     <DndProvider backend={HTML5Backend}>
@@ -775,7 +669,7 @@ export default function PipelinePage() {
           </div>
 
           {/* ── View tabs + summary ── */}
-          <div className="flex items-center gap-5 pb-3 border-b border-certifica-200">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-5 pb-3 border-b border-certifica-200">
             {/* View tabs */}
             <div className="flex items-center bg-certifica-100 rounded-[3px] p-0.5">
               {(["kanban", "gantt"] as const).map((v) => (
@@ -835,7 +729,7 @@ export default function PipelinePage() {
               />
             </div>
           </div>
-          <div className="flex items-center gap-2 py-2 border-b border-certifica-200">
+          <div className="flex flex-wrap items-center gap-2 py-2 border-b border-certifica-200 overflow-x-auto">
             {phaseForecast.map((phase) => (
               <div key={phase.colId} className="px-2 py-1 rounded-[3px] bg-white border border-certifica-200">
                 <div className="text-[10px] text-certifica-500" style={{ fontWeight: 500 }}>{phase.label}</div>
@@ -883,35 +777,36 @@ export default function PipelinePage() {
             style={{ userSelect: "none" }}
           >
             <div className="flex gap-3 h-full min-w-min">
-              {columns.map((col, index) => {
-                const colCards = filtered.filter((c) => c.fase === col.id);
+              {orderedColumns.map((col, index) => {
+                const colCards = filtered.filter((c) => c.columnId === col.id);
                 const colValor = colCards.reduce((s, c) => s + parseCurrency(c.valor), 0);
                 const overWip = col.wipLimit > 0 && colCards.length > col.wipLimit;
+                const isCollapsed = collapsedCols[col.id] ?? false;
                 return (
                   <KanbanColumn
                     key={col.id}
-                    column={col}
+                    column={{ ...col, collapsed: isCollapsed }}
                     cards={colCards}
                     colValor={colValor}
                     overWip={overWip}
                     slaDays={col.slaDays}
                     slaBreaches={phaseForecast.find((p) => p.colId === col.id)?.slaBreaches ?? 0}
-                    moveCard={moveCard}
+                    moveCard={handleMoveCard}
                     onToggleCollapse={() => toggleCollapse(col.id)}
                     onSelectCard={setSelectedCard}
                     onMoveLeft={() => moveColumnOrder(col.id, "left")}
                     onMoveRight={() => moveColumnOrder(col.id, "right")}
                     onDelete={() => deleteColumn(col.id)}
-                    onEdit={() => editColumn(col)}
+                    onEdit={() => {}}
                     onCreateOpportunity={() => openCreateOpportunity(col.id)}
                     isFirst={index === 0}
-                    isLast={index === columns.length - 1}
+                    isLast={index === orderedColumns.length - 1}
                   />
                 );
               })}
               <div className="w-[220px] flex-shrink-0">
                 <button
-                  onClick={createColumn}
+                  onClick={openCreateColumn}
                   className="w-full h-full min-h-[160px] border border-dashed border-certifica-300 rounded-[6px] bg-white/60 text-certifica-500 hover:text-certifica-dark hover:border-certifica-accent/40 transition-colors flex flex-col items-center justify-center gap-2"
                 >
                   <Plus className="w-4 h-4" strokeWidth={1.5} />
@@ -921,17 +816,17 @@ export default function PipelinePage() {
             </div>
           </div>
         ) : (
-          <GanttView cards={filtered} onSelectCard={setSelectedCard} />
+          <GanttView cards={filtered} columns={orderedColumns} onSelectCard={setSelectedCard} />
         )}
 
         {/* ── Detail overlay ── */}
         {selectedCard && (
           <CardDetailOverlay
             card={selectedCard}
-            columns={columns}
+            columns={orderedColumns}
             cardMeta={cardMetaMap[selectedCard.id] ?? getDefaultCardMeta(selectedCard)}
             onClose={() => setSelectedCard(null)}
-            moveCard={moveCard}
+            moveCard={handleMoveCard}
             onUpdateCard={updateCard}
             onUpdateCardMeta={updateCardMeta}
           />
@@ -939,18 +834,16 @@ export default function PipelinePage() {
 
         {isCreateColumnOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => { setEditingColumnId(null); setIsCreateColumnOpen(false); }} />
+            <div className="absolute inset-0 bg-certifica-dark/45" onClick={() => setIsCreateColumnOpen(false)} />
             <div className="relative w-full max-w-[520px] bg-white border border-certifica-200 rounded-[6px] shadow-[0_12px_40px_rgba(14,42,71,0.18)]">
               <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
                 <div>
-                  <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>
-                    {editingColumnId !== null ? "Editar coluna" : "Nova coluna"}
-                  </h3>
+                  <h3 className="text-certifica-900 text-[15px]" style={{ fontWeight: 600 }}>Nova coluna</h3>
                   <p className="text-[11px] text-certifica-500" style={{ fontWeight: 400 }}>
-                    Defina título, subtítulo, cor, WIP, SLA e probabilidade comercial.
+                    Defina título, cor e WIP limit.
                   </p>
                 </div>
-                <button onClick={() => { setEditingColumnId(null); setIsCreateColumnOpen(false); }} className="p-1 text-certifica-500/40 hover:text-certifica-700 transition-colors cursor-pointer">
+                <button onClick={() => setIsCreateColumnOpen(false)} className="p-1 text-certifica-500/40 hover:text-certifica-700 transition-colors cursor-pointer">
                   <X className="w-4 h-4" strokeWidth={1.5} />
                 </button>
               </div>
@@ -964,16 +857,6 @@ export default function PipelinePage() {
                     onChange={(e) => setNewColumnForm((prev) => ({ ...prev, label: e.target.value }))}
                     className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
                     placeholder="Ex.: Auditoria documental"
-                  />
-                </label>
-
-                <label className="col-span-2 text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
-                  Subtítulo
-                  <input
-                    value={newColumnForm.sublabel}
-                    onChange={(e) => setNewColumnForm((prev) => ({ ...prev, sublabel: e.target.value }))}
-                    className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
-                    placeholder="Ex.: Revisão e validação"
                   />
                 </label>
 
@@ -998,28 +881,6 @@ export default function PipelinePage() {
                     className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
                   />
                 </label>
-                <label className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
-                  SLA (dias)
-                  <input
-                    type="number"
-                    min={1}
-                    max={180}
-                    value={newColumnForm.slaDays}
-                    onChange={(e) => setNewColumnForm((prev) => ({ ...prev, slaDays: e.target.value }))}
-                    className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
-                  />
-                </label>
-                <label className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
-                  Probabilidade (%)
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={newColumnForm.probability}
-                    onChange={(e) => setNewColumnForm((prev) => ({ ...prev, probability: e.target.value }))}
-                    className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
-                  />
-                </label>
 
                 <div className="col-span-2">
                   <div className="text-[10px] text-certifica-500 mb-1">Sugestões de cor</div>
@@ -1037,11 +898,11 @@ export default function PipelinePage() {
                 </div>
 
                 <div className="col-span-2 flex items-center justify-end gap-2 pt-1">
-                  <DSButton type="button" variant="outline" size="sm" onClick={() => { setEditingColumnId(null); setIsCreateColumnOpen(false); }}>
+                  <DSButton type="button" variant="outline" size="sm" onClick={() => setIsCreateColumnOpen(false)}>
                     Cancelar
                   </DSButton>
                   <DSButton type="submit" variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" strokeWidth={1.5} />}>
-                    {editingColumnId !== null ? "Salvar coluna" : "Criar coluna"}
+                    Criar coluna
                   </DSButton>
                 </div>
               </form>
@@ -1214,7 +1075,7 @@ function EmptyDropZone() {
 
 function KanbanColumn({ column, cards, colValor, overWip, slaDays, slaBreaches, moveCard, onToggleCollapse, onSelectCard, onMoveLeft, onMoveRight, onDelete, onEdit, onCreateOpportunity, isFirst, isLast }: {
   column: ColumnConfig; cards: PipelineCard[]; colValor: number; overWip: boolean; slaDays: number; slaBreaches: number;
-  moveCard: (id: string, fase: number, idx?: number) => void; onToggleCollapse: () => void; onSelectCard: (c: PipelineCard) => void;
+  moveCard: (id: string, columnId: string, idx?: number) => void; onToggleCollapse: () => void; onSelectCard: (c: PipelineCard) => void;
   onMoveLeft: () => void; onMoveRight: () => void; onDelete: () => void; onEdit: () => void; onCreateOpportunity: () => void; isFirst: boolean; isLast: boolean;
 }) {
   const ghostRef = useRef<number | null>(null);
@@ -1439,11 +1300,13 @@ const KanbanCardContent = React.forwardRef<HTMLDivElement, { card: PipelineCard;
   const pct = entT > 0 ? Math.round((entC / entT) * 100) : 0;
   const isUrgent = card.diasRestantes > 0 && card.diasRestantes <= 30;
   const isCritical = card.diasRestantes > 0 && card.diasRestantes <= 14;
+  // Use the column colour stored on the card's fase index
+  const cardTopColor = FALLBACK_COLORS[card.fase % FALLBACK_COLORS.length];
 
   return (
     <div ref={ref} data-kanban-card onClick={() => onSelect(card)}
       className={`bg-white border border-certifica-200 rounded-[6px] transition-all cursor-pointer hover:border-certifica-accent/30 hover:shadow-[0_2px_8px_rgba(14,42,71,0.08)] group ${isDragging ? "opacity-30 scale-[0.97] ring-2 ring-certifica-accent/30" : ""}`}>
-      <div className="h-1 rounded-t-[6px]" style={{ backgroundColor: FASE_COLORS[card.fase] }} />
+      <div className="h-1 rounded-t-[6px]" style={{ backgroundColor: cardTopColor }} />
 
       <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1">
         <div data-dnd-handle className="p-0.5 text-certifica-200 hover:text-certifica-500 cursor-grab active:cursor-grabbing flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1515,7 +1378,7 @@ function CardDetailOverlay({
   columns: ColumnConfig[];
   cardMeta: CardMeta;
   onClose: () => void;
-  moveCard: (id: string, fase: number, idx?: number) => void;
+  moveCard: (id: string, columnId: string, idx?: number) => void;
   onUpdateCard: (cardId: string, patch: Partial<PipelineCard>) => void;
   onUpdateCardMeta: (cardId: string, updater: (meta: CardMeta) => CardMeta) => void;
 }) {
@@ -1530,14 +1393,14 @@ function CardDetailOverlay({
   const [activityInput, setActivityInput] = useState("");
   const [attachmentDraft, setAttachmentDraft] = useState({ name: "", type: "Arquivo", url: "" });
 
-  const allFases = columns.map((c) => c.id);
-  const currentIndex = columns.findIndex((c) => c.id === card.fase);
-  const nextFases = currentIndex >= 0 ? columns.slice(currentIndex + 1).map((c) => c.id) : [];
-  const prevFase = currentIndex > 0 ? columns[currentIndex - 1].id : null;
-  const getFaseLabel = (faseId: number) => columns.find((c) => c.id === faseId)?.label ?? FASE_LABELS[faseId] ?? `Fase ${faseId}`;
-  const getFaseColor = (faseId: number) => columns.find((c) => c.id === faseId)?.color ?? FASE_COLORS[faseId] ?? "#6B7280";
+  const allColumnIds = columns.map((c) => c.id);
+  const currentIndex = columns.findIndex((c) => c.id === card.columnId);
+  const nextColumnIds = currentIndex >= 0 ? columns.slice(currentIndex + 1).map((c) => c.id) : [];
+  const prevColumnId = currentIndex > 0 ? columns[currentIndex - 1].id : null;
+  const getColLabel = (colId: string) => columns.find((c) => c.id === colId)?.label ?? colId;
+  const getColColor = (colId: string) => columns.find((c) => c.id === colId)?.color ?? "#6B7280";
   const getPrioridadeTemperatura = (p: PipelineCard["prioridade"]) => (p === "alta" ? "Quente" : p === "media" ? "Morno" : "Frio");
-  const fixedTags = [card.norma, getPrioridadeTemperatura(card.prioridade), getFaseLabel(card.fase)];
+  const fixedTags = [card.norma, getPrioridadeTemperatura(card.prioridade), getColLabel(card.columnId)];
 
   const toIsoDate = (br: string) => {
     if (!br || br === "—") return "";
@@ -1632,8 +1495,8 @@ function CardDetailOverlay({
           </button>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className="w-[350px] flex-shrink-0 border-r border-certifica-200 overflow-y-auto">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          <div className="w-full lg:w-[350px] lg:flex-shrink-0 border-b lg:border-b-0 lg:border-r border-certifica-200 overflow-y-auto max-h-[45vh] lg:max-h-none">
             <div className="px-4 py-3 border-b border-certifica-200 space-y-2">
               <label className="text-[10px] text-certifica-500 uppercase tracking-[0.06em]" style={{ fontWeight: 600 }}>Título</label>
               <input value={card.titulo} onChange={(e) => onUpdateCard(card.id, { titulo: e.target.value })}
@@ -1711,8 +1574,8 @@ function CardDetailOverlay({
             <div className="px-5 py-3 border-b border-certifica-200">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[12px] text-certifica-dark" style={{ fontWeight: 600 }}>Fase atual</span>
-                <span className="px-2.5 py-0.5 rounded-[2px] text-white text-[11px]" style={{ backgroundColor: getFaseColor(card.fase), fontWeight: 600 }}>
-                  {getFaseLabel(card.fase)}
+                <span className="px-2.5 py-0.5 rounded-[2px] text-white text-[11px]" style={{ backgroundColor: getColColor(card.columnId), fontWeight: 600 }}>
+                  {getColLabel(card.columnId)}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5 mb-2">
@@ -1891,37 +1754,37 @@ function CardDetailOverlay({
               <span className="text-[11px] text-certifica-900" style={{ fontWeight: 600 }}>Mover card para fase</span>
             </div>
             <div className="px-3.5 py-3 space-y-2">
-              {nextFases.map((f) => (
-                <button key={f} onClick={() => moveCard(card.id, f)}
+              {nextColumnIds.map((colId) => (
+                <button key={colId} onClick={() => moveCard(card.id, colId)}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-[3px] border transition-colors cursor-pointer hover:shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
-                  style={{ borderColor: `${getFaseColor(f)}40`, backgroundColor: `${getFaseColor(f)}08` }}>
-                  <span className="text-[11px]" style={{ fontWeight: 500, color: getFaseColor(f) }}>{getFaseLabel(f)}</span>
-                  <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.5} style={{ color: getFaseColor(f) }} />
+                  style={{ borderColor: `${getColColor(colId)}40`, backgroundColor: `${getColColor(colId)}08` }}>
+                  <span className="text-[11px]" style={{ fontWeight: 500, color: getColColor(colId) }}>{getColLabel(colId)}</span>
+                  <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.5} style={{ color: getColColor(colId) }} />
                 </button>
               ))}
-              {nextFases.length === 0 && (
+              {nextColumnIds.length === 0 && (
                 <div className="py-3 text-center">
                   <CheckCircle2 className="w-5 h-5 text-conformidade mx-auto mb-1.5" strokeWidth={1.5} />
                   <span className="text-[11px] text-certifica-500">Última fase</span>
                 </div>
               )}
-              {prevFase !== null && (
+              {prevColumnId !== null && (
                 <div className="pt-2 border-t border-certifica-200 mt-3">
-                  <button onClick={() => moveCard(card.id, prevFase)}
+                  <button onClick={() => moveCard(card.id, prevColumnId)}
                     className="w-full flex items-center justify-between px-3 py-2 rounded-[3px] border border-certifica-200 bg-white transition-colors cursor-pointer hover:border-certifica-accent/30">
                     <ChevronLeft className="w-3.5 h-3.5 text-certifica-500" strokeWidth={1.5} />
-                    <span className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>{getFaseLabel(prevFase)}</span>
+                    <span className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>{getColLabel(prevColumnId)}</span>
                   </button>
                 </div>
               )}
             </div>
             <div className="px-3.5 py-3 border-t border-certifica-200 mt-2">
               <span className="text-[9px] tracking-[0.06em] uppercase text-certifica-500/60 block mb-2" style={{ fontWeight: 600 }}>Fases</span>
-              {allFases.map((f) => (
-                <div key={f} className={`flex items-center gap-2 py-1 ${f === card.fase ? "opacity-100" : "opacity-40"}`}>
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getFaseColor(f) }} />
-                  <span className="text-[10px] text-certifica-dark" style={{ fontWeight: f === card.fase ? 600 : 400 }}>{getFaseLabel(f)}</span>
-                  {f === card.fase && <span className="text-[8px] text-certifica-accent ml-auto" style={{ fontWeight: 600 }}>ATUAL</span>}
+              {allColumnIds.map((colId) => (
+                <div key={colId} className={`flex items-center gap-2 py-1 ${colId === card.columnId ? "opacity-100" : "opacity-40"}`}>
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getColColor(colId) }} />
+                  <span className="text-[10px] text-certifica-dark" style={{ fontWeight: colId === card.columnId ? 600 : 400 }}>{getColLabel(colId)}</span>
+                  {colId === card.columnId && <span className="text-[8px] text-certifica-accent ml-auto" style={{ fontWeight: 600 }}>ATUAL</span>}
                 </div>
               ))}
             </div>
@@ -1936,7 +1799,7 @@ function CardDetailOverlay({
    Gantt View
    ══════════════════════════════════════════════════════════ */
 
-function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCard: (c: PipelineCard) => void }) {
+function GanttView({ cards, columns, onSelectCard }: { cards: PipelineCard[]; columns: ColumnConfig[]; onSelectCard: (c: PipelineCard) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
@@ -1958,6 +1821,9 @@ function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCar
     return Math.max(0, Math.floor((date.getTime() - base.getTime()) / 86400000));
   };
 
+  const getColColorByFase = (fase: number) =>
+    columns[fase]?.color ?? FALLBACK_COLORS[fase % FALLBACK_COLORS.length];
+
   const { minDate, maxDate, totalDays } = useMemo(() => {
     if (ganttCards.length === 0) return { minDate: new Date(), maxDate: new Date(), totalDays: 1 };
     let min = parseDate(ganttCards[0].inicio);
@@ -1968,7 +1834,6 @@ function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCar
       if (s < min) min = s;
       if (e > max) max = e;
     });
-    // Add some padding
     min = new Date(min.getTime() - 15 * 86400000);
     max = new Date(max.getTime() + 15 * 86400000);
     const days = Math.ceil((max.getTime() - min.getTime()) / 86400000);
@@ -2061,9 +1926,7 @@ function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCar
                 </div>
               );
             })}
-            {/* final right border */}
             <div className="absolute top-0 bottom-0 w-px bg-certifica-200/60" style={{ left: timelineWidth }} />
-            {/* Today marker */}
             <div className="absolute top-0 bottom-0 w-px bg-nao-conformidade/45 z-10" style={{ left: todayX }}>
               <div className="absolute -top-0 left-1/2 -translate-x-1/2 px-1 py-px bg-nao-conformidade text-white text-[7px] rounded-[1px]" style={{ fontWeight: 600 }}>
                 Hoje
@@ -2076,12 +1939,11 @@ function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCar
         {ganttCards.map((card) => {
           const startDate = parseDate(card.inicio);
           const endDate = parseDate(card.previsao);
-          const startPct = ((startDate.getTime() - minDate.getTime()) / 86400000 / totalDays) * 100;
-          const widthPct = ((endDate.getTime() - startDate.getTime()) / 86400000 / totalDays) * 100;
           const entC = card.entregaveis.filter((e) => e.concluido).length;
           const entT = card.entregaveis.length;
           const pct = entT > 0 ? Math.round((entC / entT) * 100) : 0;
           const pr = prioridadeConfig[card.prioridade];
+          const barColor = getColColorByFase(card.fase);
 
           return (
             <div key={card.id} className="flex items-center h-10 border-b border-certifica-200/40 hover:bg-certifica-50/50 cursor-pointer group"
@@ -2095,27 +1957,22 @@ function GanttView({ cards, onSelectCard }: { cards: PipelineCard[]; onSelectCar
 
               {/* Bar */}
               <div className="relative h-full flex items-center" style={{ width: timelineWidth }}>
-                {/* Month grid lines */}
                 {months.map((m, i) => (
                   <div key={i} className="absolute top-0 bottom-0 border-l border-certifica-200/30" style={{ left: m.startDay * dayWidth }} />
                 ))}
-                {/* Today line */}
                 <div className="absolute top-0 bottom-0 w-px bg-nao-conformidade/20 z-10" style={{ left: todayX }} />
 
-                {/* Gantt bar */}
                 <div className="absolute h-5 rounded-[3px] flex items-center overflow-hidden transition-shadow group-hover:shadow-[0_1px_4px_rgba(0,0,0,0.1)]"
                   style={{
                     left: toDayOffset(startDate, minDate) * dayWidth,
                     width: Math.max(8, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) * dayWidth),
-                    backgroundColor: FASE_COLORS[card.fase] + "18",
-                    border: `1px solid ${FASE_COLORS[card.fase]}40`,
+                    backgroundColor: barColor + "18",
+                    border: `1px solid ${barColor}40`,
                   }}>
-                  {/* Progress fill */}
                   <div className="absolute left-0 top-0 bottom-0 rounded-l-[2px]"
-                    style={{ width: `${pct}%`, backgroundColor: FASE_COLORS[card.fase] + "30" }} />
-                  {/* Label inside bar */}
+                    style={{ width: `${pct}%`, backgroundColor: barColor + "30" }} />
                   {Math.max(8, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000) * dayWidth) > 90 && (
-                    <span className="relative z-10 px-2 text-[9px] truncate" style={{ color: FASE_COLORS[card.fase], fontWeight: 600 }}>
+                    <span className="relative z-10 px-2 text-[9px] truncate" style={{ color: barColor, fontWeight: 600 }}>
                       {card.norma} — {pct}%
                     </span>
                   )}

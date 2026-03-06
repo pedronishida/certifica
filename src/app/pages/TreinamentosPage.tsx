@@ -3,141 +3,252 @@ import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
 import {
   Search, GraduationCap, Plus, X, Users, Clock, Award, BookOpen,
-  CheckCircle2, PlayCircle, Calendar, BarChart3, ChevronRight,
+  CheckCircle2, Calendar, Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
+import { useTrainings } from "../lib/useTrainings";
+import type { TrainingWithEnrollments, Enrollment } from "../lib/useTrainings";
+import type { TrainingInsert } from "../lib/database.types";
 
-type TrainingStatus = "disponivel" | "em-andamento" | "concluido" | "expirado";
+// ── UI-only types (category and mandatory live only in the UI layer) ──────────
 type TrainingCategory = "iso" | "auditoria" | "seguranca" | "ambiental" | "lideranca" | "tecnico";
 
-interface Training {
-  id: string;
-  title: string;
-  description: string;
-  category: TrainingCategory;
-  normRef?: string;
-  duration: string;
-  instructor: string;
-  maxParticipants: number;
-  enrolledCount: number;
-  completedCount: number;
-  nextDate?: string;
-  format: "presencial" | "online" | "hibrido";
-  mandatory: boolean;
-}
-
-interface Enrollment {
-  id: string;
-  trainingId: string;
-  participant: string;
-  company: string;
-  status: TrainingStatus;
-  enrollDate: string;
-  completionDate?: string;
-  score?: number;
-  certificate?: boolean;
-}
+// DB enrollment statuses that map to the UI badge variants
+type UIEnrollStatus = "inscrito" | "presente" | "ausente" | "aprovado" | "reprovado";
 
 const categoryMeta: Record<TrainingCategory, { label: string; color: string }> = {
-  iso: { label: "Normas ISO", color: "text-certifica-accent" },
-  auditoria: { label: "Auditoria", color: "text-observacao" },
-  seguranca: { label: "Segurança", color: "text-nao-conformidade" },
-  ambiental: { label: "Ambiental", color: "text-conformidade" },
-  lideranca: { label: "Liderança", color: "text-oportunidade" },
-  tecnico: { label: "Técnico", color: "text-certifica-500" },
+  iso:       { label: "Normas ISO",  color: "text-certifica-accent" },
+  auditoria: { label: "Auditoria",   color: "text-observacao" },
+  seguranca: { label: "Segurança",   color: "text-nao-conformidade" },
+  ambiental: { label: "Ambiental",   color: "text-conformidade" },
+  lideranca: { label: "Liderança",   color: "text-oportunidade" },
+  tecnico:   { label: "Técnico",     color: "text-certifica-500" },
 };
 
-const statusMeta: Record<TrainingStatus, { label: string; variant: "outline" | "conformidade" | "observacao" | "oportunidade" | "nao-conformidade" }> = {
-  disponivel: { label: "Disponível", variant: "oportunidade" },
+const enrollStatusMeta: Record<UIEnrollStatus, { label: string; variant: "outline" | "conformidade" | "observacao" | "oportunidade" | "nao-conformidade" }> = {
+  inscrito:  { label: "Inscrito",   variant: "oportunidade" },
+  presente:  { label: "Presente",   variant: "observacao" },
+  ausente:   { label: "Ausente",    variant: "nao-conformidade" },
+  aprovado:  { label: "Aprovado",   variant: "conformidade" },
+  reprovado: { label: "Reprovado",  variant: "nao-conformidade" },
+};
+
+// Training DB status → badge
+const trainingStatusMeta: Record<string, { label: string; variant: "outline" | "conformidade" | "observacao" | "oportunidade" | "nao-conformidade" }> = {
+  "planejado":    { label: "Planejado",    variant: "oportunidade" },
   "em-andamento": { label: "Em andamento", variant: "observacao" },
-  concluido: { label: "Concluído", variant: "conformidade" },
-  expirado: { label: "Expirado", variant: "nao-conformidade" },
+  "concluido":    { label: "Concluído",    variant: "conformidade" },
 };
 
-const trainings: Training[] = [
-  { id: "t1", title: "Interpretação da ISO 9001:2015", description: "Entenda todos os requisitos da norma de qualidade e como aplicá-los na prática.", category: "iso", normRef: "ISO 9001", duration: "16h", instructor: "Carlos Silva", maxParticipants: 25, enrolledCount: 18, completedCount: 12, nextDate: "2026-03-15", format: "hibrido", mandatory: true },
-  { id: "t2", title: "Auditor Interno ISO 9001", description: "Formação completa para conduzir auditorias internas eficazes.", category: "auditoria", normRef: "ISO 9001", duration: "24h", instructor: "Ana Costa", maxParticipants: 20, enrolledCount: 15, completedCount: 8, nextDate: "2026-04-01", format: "presencial", mandatory: true },
-  { id: "t3", title: "Gestão Ambiental – ISO 14001", description: "Implementação e manutenção do sistema de gestão ambiental.", category: "ambiental", normRef: "ISO 14001", duration: "16h", instructor: "Roberto Lima", maxParticipants: 25, enrolledCount: 10, completedCount: 6, nextDate: "2026-03-20", format: "online", mandatory: false },
-  { id: "t4", title: "Segurança do Trabalho – ISO 45001", description: "Identificação de perigos, avaliação de riscos e medidas de controle.", category: "seguranca", normRef: "ISO 45001", duration: "20h", instructor: "Juliana Mendes", maxParticipants: 30, enrolledCount: 22, completedCount: 14, nextDate: "2026-04-10", format: "presencial", mandatory: true },
-  { id: "t5", title: "Segurança da Informação – ISO 27001", description: "Fundamentos do SGSI e controles do Anexo A.", category: "iso", normRef: "ISO 27001", duration: "12h", instructor: "Ana Costa", maxParticipants: 20, enrolledCount: 8, completedCount: 3, nextDate: "2026-05-01", format: "online", mandatory: false },
-  { id: "t6", title: "Auditor Líder ISO 14001", description: "Formação avançada para liderar equipes de auditoria ambiental.", category: "auditoria", normRef: "ISO 14001", duration: "40h", instructor: "Roberto Lima", maxParticipants: 15, enrolledCount: 7, completedCount: 5, format: "presencial", mandatory: false },
-  { id: "t7", title: "Liderança em Sistemas de Gestão", description: "Desenvolva habilidades de liderança para gestão de equipes em consultoria.", category: "lideranca", duration: "8h", instructor: "Carlos Silva", maxParticipants: 30, enrolledCount: 20, completedCount: 16, nextDate: "2026-03-25", format: "online", mandatory: false },
-  { id: "t8", title: "FMEA e Ferramentas da Qualidade", description: "Análise de falhas, diagrama de Ishikawa, 5 Porquês e PDCA.", category: "tecnico", normRef: "ISO 9001", duration: "12h", instructor: "Juliana Mendes", maxParticipants: 25, enrolledCount: 14, completedCount: 9, format: "hibrido", mandatory: false },
-  { id: "t9", title: "Gestão de Energia – ISO 50001", description: "Fundamentos de eficiência energética e sistema de gestão de energia.", category: "ambiental", normRef: "ISO 50001", duration: "12h", instructor: "Ana Costa", maxParticipants: 20, enrolledCount: 5, completedCount: 2, format: "online", mandatory: false },
-];
+// Derive a UI category from the norma field for display purposes
+function categoryFromNorma(norma: string): TrainingCategory {
+  const n = (norma ?? "").toUpperCase();
+  if (n.includes("14001") || n.includes("50001")) return "ambiental";
+  if (n.includes("45001"))                          return "seguranca";
+  if (n.includes("27001"))                          return "iso";
+  if (n.includes("9001"))                           return "iso";
+  if (n.includes("AUDIT"))                          return "auditoria";
+  return "tecnico";
+}
 
-const initialEnrollments: Enrollment[] = [
-  { id: "e1", trainingId: "t1", participant: "João Pereira", company: "Metalúrgica AçoForte", status: "concluido", enrollDate: "2025-12-01", completionDate: "2026-01-15", score: 92, certificate: true },
-  { id: "e2", trainingId: "t1", participant: "Maria Santos", company: "Grupo Energis", status: "em-andamento", enrollDate: "2026-02-01" },
-  { id: "e3", trainingId: "t2", participant: "Pedro Almeida", company: "Plastiform Industrial", status: "concluido", enrollDate: "2025-11-10", completionDate: "2026-01-20", score: 88, certificate: true },
-  { id: "e4", trainingId: "t4", participant: "Ana Souza", company: "Metalúrgica AçoForte", status: "em-andamento", enrollDate: "2026-01-15" },
-  { id: "e5", trainingId: "t3", participant: "Carlos Mendes", company: "EcoVerde Sustentável", status: "disponivel", enrollDate: "2026-02-10" },
-  { id: "e6", trainingId: "t7", participant: "Roberto Costa", company: "Grupo Energis", status: "concluido", enrollDate: "2025-10-01", completionDate: "2025-10-20", score: 95, certificate: true },
-  { id: "e7", trainingId: "t5", participant: "Fernanda Lima", company: "TechSoft Sistemas", status: "em-andamento", enrollDate: "2026-01-20" },
-];
+// DB tipo → UI format label
+function formatLabel(tipo: "presencial" | "ead" | "hibrido"): string {
+  if (tipo === "ead") return "Online";
+  if (tipo === "presencial") return "Presencial";
+  return "Híbrido";
+}
 
-const companies = ["Metalúrgica AçoForte", "Grupo Energis", "Plastiform Industrial", "TechSoft Sistemas", "EcoVerde Sustentável", "BioFarma Ltda"];
+const companies = [
+  "Metalúrgica AçoForte", "Grupo Energis", "Plastiform Industrial",
+  "TechSoft Sistemas", "EcoVerde Sustentável", "BioFarma Ltda",
+];
 
 export default function TreinamentosPage() {
-  const [search, setSearch] = useState("");
-  const [catFilter, setCatFilter] = useState<TrainingCategory | "todas">("todas");
-  const [selectedTraining, setSelectedTraining] = useState<Training | null>(null);
-  const [enrollments, setEnrollments] = useState<Enrollment[]>(initialEnrollments);
-  const [showEnrollModal, setShowEnrollModal] = useState(false);
-  const [enrollForm, setEnrollForm] = useState({ participant: "", company: "", trainingId: "" });
+  const { trainings, loading, error, createTraining, enroll } = useTrainings();
 
+  const [search, setSearch]             = useState("");
+  const [catFilter, setCatFilter]       = useState<TrainingCategory | "todas">("todas");
+  const [selectedTraining, setSelectedTraining] = useState<TrainingWithEnrollments | null>(null);
+
+  // Enroll modal
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [enrollForm, setEnrollForm]           = useState({
+    participant: "",
+    email: "",
+    company: "",
+    trainingId: "",
+  });
+  const [enrolling, setEnrolling] = useState(false);
+
+  // Create training modal
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState<{
+    titulo: string;
+    descricao: string;
+    norma: string;
+    carga_horaria: string;
+    instrutor: string;
+    tipo: "presencial" | "ead" | "hibrido";
+    status: "planejado" | "em-andamento" | "concluido";
+    data_inicio: string;
+    data_fim: string;
+  }>({
+    titulo: "",
+    descricao: "",
+    norma: "",
+    carga_horaria: "",
+    instrutor: "",
+    tipo: "presencial",
+    status: "planejado",
+    data_inicio: "",
+    data_fim: "",
+  });
+  const [creating, setCreating] = useState(false);
+
+  // ── Derived / filtered list ──────────────────────────────────────────────
   const filtered = useMemo(() => {
     return trainings.filter((t) => {
-      if (catFilter !== "todas" && t.category !== catFilter) return false;
+      const cat = categoryFromNorma(t.norma);
+      if (catFilter !== "todas" && cat !== catFilter) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
-      return t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || (t.normRef ?? "").toLowerCase().includes(q);
+      return (
+        t.titulo.toLowerCase().includes(q) ||
+        t.descricao.toLowerCase().includes(q) ||
+        (t.norma ?? "").toLowerCase().includes(q)
+      );
     });
-  }, [search, catFilter]);
+  }, [trainings, search, catFilter]);
 
-  const trainingEnrollments = useMemo(() => {
-    if (!selectedTraining) return [];
-    return enrollments.filter((e) => e.trainingId === selectedTraining.id);
-  }, [selectedTraining, enrollments]);
+  // Keep selectedTraining in sync when trainings array is refreshed
+  const liveSelected: TrainingWithEnrollments | null = useMemo(() => {
+    if (!selectedTraining) return null;
+    return trainings.find((t) => t.id === selectedTraining.id) ?? selectedTraining;
+  }, [trainings, selectedTraining]);
 
+  // ── Stats ────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    const totalEnrolled = enrollments.length;
-    const completed = enrollments.filter((e) => e.status === "concluido").length;
-    const certs = enrollments.filter((e) => e.certificate).length;
-    const avgScore = enrollments.filter((e) => e.score).reduce((a, e) => a + (e.score ?? 0), 0) / (enrollments.filter((e) => e.score).length || 1);
-    return { totalEnrolled, completed, certs, avgScore: Math.round(avgScore) };
-  }, [enrollments]);
+    const allEnrollments: Enrollment[] = trainings.flatMap((t) => t.enrollments);
+    const totalEnrolled = allEnrollments.length;
+    const completed     = allEnrollments.filter((e) => e.status === "aprovado").length;
+    const certs         = allEnrollments.filter((e) => e.certificado_url).length;
+    const scored        = allEnrollments.filter((e) => e.nota != null);
+    const avgScore      = scored.length
+      ? Math.round(scored.reduce((a, e) => a + (e.nota ?? 0), 0) / scored.length)
+      : 0;
+    return { totalEnrolled, completed, certs, avgScore };
+  }, [trainings]);
 
-  const handleEnroll = () => {
-    if (!enrollForm.participant || !enrollForm.company || !enrollForm.trainingId) return;
-    setEnrollments((prev) => [...prev, {
-      id: `e-${Date.now()}`, trainingId: enrollForm.trainingId, participant: enrollForm.participant,
-      company: enrollForm.company, status: "disponivel", enrollDate: new Date().toISOString().slice(0, 10),
-    }]);
-    setEnrollForm({ participant: "", company: "", trainingId: "" });
-    setShowEnrollModal(false);
+  // ── Handlers ─────────────────────────────────────────────────────────────
+  const handleEnroll = async () => {
+    if (!enrollForm.participant || !enrollForm.email || !enrollForm.trainingId) return;
+    setEnrolling(true);
+    try {
+      const result = await enroll({
+        training_id:        enrollForm.trainingId,
+        participante_nome:  enrollForm.participant,
+        participante_email: enrollForm.email,
+        status:             "inscrito",
+      });
+      if (result) {
+        toast.success("Participante matriculado com sucesso!");
+        setEnrollForm({ participant: "", email: "", company: "", trainingId: "" });
+        setShowEnrollModal(false);
+      } else {
+        toast.error("Erro ao matricular participante. Verifique se já está inscrito.");
+      }
+    } catch {
+      toast.error("Erro inesperado ao matricular participante.");
+    } finally {
+      setEnrolling(false);
+    }
   };
+
+  const handleCreateTraining = async () => {
+    if (!createForm.titulo || !createForm.instrutor) return;
+    setCreating(true);
+    try {
+      const payload: TrainingInsert = {
+        titulo:        createForm.titulo,
+        descricao:     createForm.descricao,
+        norma:         createForm.norma,
+        carga_horaria: createForm.carga_horaria ? Number(createForm.carga_horaria) : 0,
+        instrutor:     createForm.instrutor,
+        tipo:          createForm.tipo,
+        status:        createForm.status,
+        data_inicio:   createForm.data_inicio || null,
+        data_fim:      createForm.data_fim    || null,
+      };
+      const result = await createTraining(payload);
+      if (result) {
+        toast.success("Treinamento criado com sucesso!");
+        setCreateForm({
+          titulo: "", descricao: "", norma: "", carga_horaria: "",
+          instrutor: "", tipo: "presencial", status: "planejado",
+          data_inicio: "", data_fim: "",
+        });
+        setShowCreateModal(false);
+      } else {
+        toast.error("Erro ao criar treinamento.");
+      }
+    } catch {
+      toast.error("Erro inesperado ao criar treinamento.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="p-5 flex items-center justify-center h-64">
+        <Loader2 className="w-6 h-6 animate-spin text-certifica-accent mr-2" />
+        <span className="text-certifica-500 text-[13px]">Carregando treinamentos…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-5">
+        <div className="bg-red-50 border border-red-200 rounded-[4px] px-4 py-3 text-[12px] text-red-700">
+          Erro ao carregar treinamentos: {error}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-5 space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-certifica-900 text-lg" style={{ fontWeight: 700 }}>Treinamentos</h2>
           <p className="text-[11px] text-certifica-500">Catálogo de treinamentos, matrículas e certificados — vinculado às normas e projetos.</p>
         </div>
-        <DSButton size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => { setShowEnrollModal(true); setEnrollForm({ participant: "", company: "", trainingId: selectedTraining?.id ?? "" }); }}>
-          Matricular participante
-        </DSButton>
+        <div className="flex items-center gap-2">
+          <DSButton variant="outline" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setShowCreateModal(true)}>
+            Novo treinamento
+          </DSButton>
+          <DSButton size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => {
+            setShowEnrollModal(true);
+            setEnrollForm({ participant: "", email: "", company: "", trainingId: liveSelected?.id ?? "" });
+          }}>
+            Matricular participante
+          </DSButton>
+        </div>
       </div>
 
+      {/* KPI cards */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: "Treinamentos", value: trainings.length, icon: <BookOpen className="w-4 h-4" />, color: "text-certifica-accent" },
-          { label: "Matrículas ativas", value: stats.totalEnrolled, icon: <Users className="w-4 h-4" />, color: "text-observacao" },
-          { label: "Concluídos", value: stats.completed, icon: <CheckCircle2 className="w-4 h-4" />, color: "text-conformidade" },
-          { label: "Nota média", value: `${stats.avgScore}%`, icon: <Award className="w-4 h-4" />, color: "text-oportunidade" },
+          { label: "Treinamentos",   value: trainings.length,      icon: <BookOpen className="w-4 h-4" />,      color: "text-certifica-accent" },
+          { label: "Matrículas ativas", value: stats.totalEnrolled, icon: <Users className="w-4 h-4" />,        color: "text-observacao" },
+          { label: "Aprovados",      value: stats.completed,        icon: <CheckCircle2 className="w-4 h-4" />, color: "text-conformidade" },
+          { label: "Nota média",     value: `${stats.avgScore}%`,   icon: <Award className="w-4 h-4" />,        color: "text-oportunidade" },
         ].map((k) => (
           <div key={k.label} className="bg-white border border-certifica-200 rounded-[4px] p-3 flex items-center gap-3">
-            <div className={`${k.color}`}>{k.icon}</div>
+            <div className={k.color}>{k.icon}</div>
             <div>
               <div className="text-[10px] uppercase tracking-wider text-certifica-500" style={{ fontWeight: 600 }}>{k.label}</div>
               <div className={`text-xl ${k.color}`} style={{ fontWeight: 700 }}>{k.value}</div>
@@ -146,60 +257,99 @@ export default function TreinamentosPage() {
         ))}
       </div>
 
+      {/* Search / filter bar */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-certifica-500/40" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar treinamento..." className="w-full h-8 pl-8 pr-3 rounded-[4px] bg-white border border-certifica-200 text-[12px] focus:outline-none focus:ring-1 focus:ring-certifica-accent/40" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar treinamento..."
+            className="w-full h-8 pl-8 pr-3 rounded-[4px] bg-white border border-certifica-200 text-[12px] focus:outline-none focus:ring-1 focus:ring-certifica-accent/40"
+          />
         </div>
-        <select value={catFilter} onChange={(e) => setCatFilter(e.target.value as TrainingCategory | "todas")} className="h-8 px-2 rounded-[4px] border border-certifica-200 text-[11px] bg-white">
+        <select
+          value={catFilter}
+          onChange={(e) => setCatFilter(e.target.value as TrainingCategory | "todas")}
+          className="h-8 px-2 rounded-[4px] border border-certifica-200 text-[11px] bg-white"
+        >
           <option value="todas">Todas categorias</option>
-          {Object.entries(categoryMeta).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          {Object.entries(categoryMeta).map(([k, v]) => (
+            <option key={k} value={k}>{v.label}</option>
+          ))}
         </select>
       </div>
 
-      <div className="grid grid-cols-[1fr_380px] gap-4">
+      {/* Main grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
+        {/* Training list */}
         <div className="space-y-2">
           {filtered.map((t) => {
-            const cat = categoryMeta[t.category];
-            const isActive = selectedTraining?.id === t.id;
-            const occupancy = Math.round((t.enrolledCount / t.maxParticipants) * 100);
+            const cat      = categoryMeta[categoryFromNorma(t.norma)];
+            const isActive = liveSelected?.id === t.id;
+            const total    = t.total_inscritos;
+            // occupancy bar: use a nominal max of 25 when we don't have maxParticipants
+            const nominalMax = 25;
+            const occupancy  = Math.min(100, Math.round((total / nominalMax) * 100));
+
             return (
-              <button key={t.id} onClick={() => setSelectedTraining(t)} className={`w-full text-left bg-white border rounded-[4px] p-3 transition-all ${isActive ? "border-certifica-accent shadow-sm" : "border-certifica-200 hover:border-certifica-accent/40"}`}>
+              <button
+                key={t.id}
+                onClick={() => setSelectedTraining(t)}
+                className={`w-full text-left bg-white border rounded-[4px] p-3 transition-all ${isActive ? "border-certifica-accent shadow-sm" : "border-certifica-200 hover:border-certifica-accent/40"}`}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-[12.5px] text-certifica-dark" style={{ fontWeight: 600 }}>{t.title}</span>
-                      {t.mandatory && <DSBadge variant="nao-conformidade">Obrigatório</DSBadge>}
+                      <span className="text-[12.5px] text-certifica-dark" style={{ fontWeight: 600 }}>{t.titulo}</span>
+                      {t.status === "em-andamento" && (
+                        <DSBadge variant="observacao">Em andamento</DSBadge>
+                      )}
+                      {t.status === "concluido" && (
+                        <DSBadge variant="conformidade">Concluído</DSBadge>
+                      )}
                     </div>
-                    <p className="text-[10.5px] text-certifica-500 mb-1.5">{t.description}</p>
+                    <p className="text-[10.5px] text-certifica-500 mb-1.5">{t.descricao}</p>
                     <div className="flex items-center gap-3 text-[10px] text-certifica-500">
                       <span className={cat.color} style={{ fontWeight: 500 }}>{cat.label}</span>
-                      {t.normRef && <span>Ref: {t.normRef}</span>}
-                      <span className="flex items-center gap-0.5"><Clock className="w-3 h-3" /> {t.duration}</span>
-                      <span className="flex items-center gap-0.5"><Users className="w-3 h-3" /> {t.enrolledCount}/{t.maxParticipants}</span>
-                      <span className="capitalize">{t.format}</span>
+                      {t.norma && <span>Ref: {t.norma}</span>}
+                      <span className="flex items-center gap-0.5">
+                        <Clock className="w-3 h-3" /> {t.carga_horaria}h
+                      </span>
+                      <span className="flex items-center gap-0.5">
+                        <Users className="w-3 h-3" /> {total} inscrito{total !== 1 ? "s" : ""}
+                      </span>
+                      <span className="capitalize">{formatLabel(t.tipo)}</span>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    {t.nextDate && (
+                    {t.data_inicio && (
                       <span className="text-[9px] text-certifica-500 flex items-center gap-0.5">
-                        <Calendar className="w-3 h-3" /> {new Date(t.nextDate).toLocaleDateString("pt-BR")}
+                        <Calendar className="w-3 h-3" /> {new Date(t.data_inicio).toLocaleDateString("pt-BR")}
                       </span>
                     )}
                     <div className="w-16 bg-certifica-100 rounded-full h-1.5 mt-1">
-                      <div className={`rounded-full h-1.5 ${occupancy > 90 ? "bg-nao-conformidade" : occupancy > 70 ? "bg-observacao" : "bg-conformidade"}`} style={{ width: `${occupancy}%` }} />
+                      <div
+                        className={`rounded-full h-1.5 ${occupancy > 90 ? "bg-nao-conformidade" : occupancy > 70 ? "bg-observacao" : "bg-conformidade"}`}
+                        style={{ width: `${occupancy}%` }}
+                      />
                     </div>
-                    <span className="text-[9px] text-certifica-500">{occupancy}% ocupado</span>
+                    <span className="text-[9px] text-certifica-500">{total} inscrito{total !== 1 ? "s" : ""}</span>
                   </div>
                 </div>
               </button>
             );
           })}
-          {filtered.length === 0 && <div className="text-center py-10 text-certifica-500 text-[12px]">Nenhum treinamento encontrado.</div>}
+          {filtered.length === 0 && (
+            <div className="text-center py-10 text-certifica-500 text-[12px]">
+              Nenhum treinamento encontrado.
+            </div>
+          )}
         </div>
 
+        {/* Detail panel */}
         <div className="bg-white border border-certifica-200 rounded-[4px] overflow-hidden">
-          {!selectedTraining ? (
+          {!liveSelected ? (
             <div className="h-full flex flex-col items-center justify-center p-8 text-certifica-500 text-center">
               <GraduationCap className="w-10 h-10 mb-3 text-certifica-200" />
               <p className="text-[13px]" style={{ fontWeight: 500 }}>Selecione um treinamento</p>
@@ -208,40 +358,51 @@ export default function TreinamentosPage() {
           ) : (
             <div className="flex flex-col max-h-[calc(100vh-260px)]">
               <div className="px-4 py-3 border-b border-certifica-200 flex-shrink-0">
-                <div className="text-[14px] text-certifica-dark" style={{ fontWeight: 700 }}>{selectedTraining.title}</div>
+                <div className="text-[14px] text-certifica-dark" style={{ fontWeight: 700 }}>{liveSelected.titulo}</div>
                 <div className="flex items-center gap-2 mt-1 text-[10px] text-certifica-500">
-                  <span>Instrutor: {selectedTraining.instructor}</span>
+                  <span>Instrutor: {liveSelected.instrutor}</span>
                   <span>·</span>
-                  <span>{selectedTraining.duration}</span>
+                  <span>{liveSelected.carga_horaria}h</span>
                   <span>·</span>
-                  <span className="capitalize">{selectedTraining.format}</span>
-                  {selectedTraining.normRef && <><span>·</span><span>Ref: {selectedTraining.normRef}</span></>}
+                  <span className="capitalize">{formatLabel(liveSelected.tipo)}</span>
+                  {liveSelected.norma && <><span>·</span><span>Ref: {liveSelected.norma}</span></>}
+                </div>
+                <div className="mt-1">
+                  <DSBadge variant={trainingStatusMeta[liveSelected.status]?.variant ?? "outline"}>
+                    {trainingStatusMeta[liveSelected.status]?.label ?? liveSelected.status}
+                  </DSBadge>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-                <p className="text-[11.5px] text-certifica-dark">{selectedTraining.description}</p>
+                <p className="text-[11.5px] text-certifica-dark">{liveSelected.descricao}</p>
 
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-certifica-500 mb-1.5" style={{ fontWeight: 600 }}>
-                    Participantes ({trainingEnrollments.length})
+                    Participantes ({liveSelected.enrollments.length})
                   </div>
-                  {trainingEnrollments.length === 0 ? (
+                  {liveSelected.enrollments.length === 0 ? (
                     <p className="text-[11px] text-certifica-500 italic">Nenhum participante matriculado.</p>
                   ) : (
                     <div className="space-y-1.5">
-                      {trainingEnrollments.map((e) => {
-                        const st = statusMeta[e.status];
+                      {liveSelected.enrollments.map((e) => {
+                        const st = enrollStatusMeta[e.status as UIEnrollStatus] ?? { label: e.status, variant: "outline" as const };
                         return (
                           <div key={e.id} className="border border-certifica-200 rounded-[4px] p-2.5">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-[11px] text-certifica-dark" style={{ fontWeight: 600 }}>{e.participant}</span>
+                              <span className="text-[11px] text-certifica-dark" style={{ fontWeight: 600 }}>{e.participante_nome}</span>
                               <DSBadge variant={st.variant}>{st.label}</DSBadge>
                             </div>
                             <div className="flex items-center gap-3 text-[10px] text-certifica-500">
-                              <span>{e.company}</span>
-                              <span>Matrícula: {new Date(e.enrollDate).toLocaleDateString("pt-BR")}</span>
-                              {e.score != null && <span>Nota: <strong>{e.score}%</strong></span>}
-                              {e.certificate && <span className="text-conformidade flex items-center gap-0.5"><Award className="w-3 h-3" /> Certificado</span>}
+                              <span>{e.participante_email}</span>
+                              <span>Matrícula: {new Date(e.created_at).toLocaleDateString("pt-BR")}</span>
+                              {e.nota != null && (
+                                <span>Nota: <strong>{e.nota}%</strong></span>
+                              )}
+                              {e.certificado_url && (
+                                <span className="text-conformidade flex items-center gap-0.5">
+                                  <Award className="w-3 h-3" /> Certificado
+                                </span>
+                              )}
                             </div>
                           </div>
                         );
@@ -255,36 +416,190 @@ export default function TreinamentosPage() {
         </div>
       </div>
 
+      {/* ── Enroll modal ───────────────────────────────────────────────────── */}
       {showEnrollModal && (
         <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setShowEnrollModal(false)}>
           <div className="bg-white rounded-[6px] border border-certifica-200 w-[420px] shadow-lg" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
               <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>Matricular participante</span>
-              <button onClick={() => setShowEnrollModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer"><X className="w-4 h-4" /></button>
+              <button onClick={() => setShowEnrollModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
             </div>
             <div className="p-4 space-y-3">
               <div>
                 <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Nome do participante *</label>
-                <input value={enrollForm.participant} onChange={(e) => setEnrollForm((p) => ({ ...p, participant: e.target.value }))} placeholder="Nome completo" className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]" />
+                <input
+                  value={enrollForm.participant}
+                  onChange={(e) => setEnrollForm((p) => ({ ...p, participant: e.target.value }))}
+                  placeholder="Nome completo"
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                />
               </div>
               <div>
-                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Empresa *</label>
-                <select value={enrollForm.company} onChange={(e) => setEnrollForm((p) => ({ ...p, company: e.target.value }))} className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]">
+                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>E-mail do participante *</label>
+                <input
+                  type="email"
+                  value={enrollForm.email}
+                  onChange={(e) => setEnrollForm((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="email@exemplo.com"
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Empresa</label>
+                <select
+                  value={enrollForm.company}
+                  onChange={(e) => setEnrollForm((p) => ({ ...p, company: e.target.value }))}
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                >
                   <option value="">Selecione</option>
                   {companies.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Treinamento *</label>
-                <select value={enrollForm.trainingId} onChange={(e) => setEnrollForm((p) => ({ ...p, trainingId: e.target.value }))} className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]">
+                <select
+                  value={enrollForm.trainingId}
+                  onChange={(e) => setEnrollForm((p) => ({ ...p, trainingId: e.target.value }))}
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                >
                   <option value="">Selecione</option>
-                  {trainings.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                  {trainings.map((t) => <option key={t.id} value={t.id}>{t.titulo}</option>)}
                 </select>
               </div>
             </div>
             <div className="px-4 py-3 border-t border-certifica-200 flex justify-end gap-2">
               <DSButton variant="outline" size="sm" onClick={() => setShowEnrollModal(false)}>Cancelar</DSButton>
-              <DSButton size="sm" onClick={handleEnroll}>Matricular</DSButton>
+              <DSButton
+                size="sm"
+                onClick={handleEnroll}
+                disabled={enrolling || !enrollForm.participant || !enrollForm.email || !enrollForm.trainingId}
+              >
+                {enrolling ? "Matriculando…" : "Matricular"}
+              </DSButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create training modal ──────────────────────────────────────────── */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-white rounded-[6px] border border-certifica-200 w-[480px] shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-certifica-200 flex items-center justify-between">
+              <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>Novo treinamento</span>
+              <button onClick={() => setShowCreateModal(false)} className="text-certifica-500 hover:text-certifica-dark cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Título *</label>
+                <input
+                  value={createForm.titulo}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, titulo: e.target.value }))}
+                  placeholder="Nome do treinamento"
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Descrição</label>
+                <textarea
+                  value={createForm.descricao}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, descricao: e.target.value }))}
+                  placeholder="Descreva o conteúdo do treinamento"
+                  rows={2}
+                  className="w-full px-2 py-1.5 rounded-[4px] border border-certifica-200 text-[12px] resize-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Norma de referência</label>
+                  <input
+                    value={createForm.norma}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, norma: e.target.value }))}
+                    placeholder="ex: ISO 9001"
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Carga horária (h)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={createForm.carga_horaria}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, carga_horaria: e.target.value }))}
+                    placeholder="16"
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Instrutor *</label>
+                <input
+                  value={createForm.instrutor}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, instrutor: e.target.value }))}
+                  placeholder="Nome do instrutor"
+                  className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Formato</label>
+                  <select
+                    value={createForm.tipo}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, tipo: e.target.value as "presencial" | "ead" | "hibrido" }))}
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[11px] bg-white"
+                  >
+                    <option value="presencial">Presencial</option>
+                    <option value="ead">Online (EAD)</option>
+                    <option value="hibrido">Híbrido</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Status</label>
+                  <select
+                    value={createForm.status}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, status: e.target.value as "planejado" | "em-andamento" | "concluido" }))}
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[11px] bg-white"
+                  >
+                    <option value="planejado">Planejado</option>
+                    <option value="em-andamento">Em andamento</option>
+                    <option value="concluido">Concluído</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Data de início</label>
+                  <input
+                    type="date"
+                    value={createForm.data_inicio}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, data_inicio: e.target.value }))}
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-certifica-500 mb-1" style={{ fontWeight: 600 }}>Data de fim</label>
+                  <input
+                    type="date"
+                    value={createForm.data_fim}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, data_fim: e.target.value }))}
+                    className="w-full h-8 px-2 rounded-[4px] border border-certifica-200 text-[12px]"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="px-4 py-3 border-t border-certifica-200 flex justify-end gap-2">
+              <DSButton variant="outline" size="sm" onClick={() => setShowCreateModal(false)}>Cancelar</DSButton>
+              <DSButton
+                size="sm"
+                onClick={handleCreateTraining}
+                disabled={creating || !createForm.titulo || !createForm.instrutor}
+              >
+                {creating ? "Criando…" : "Criar treinamento"}
+              </DSButton>
             </div>
           </div>
         </div>

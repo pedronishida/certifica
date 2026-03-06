@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
 import { DSCard } from "../components/ds/DSCard";
@@ -6,6 +7,8 @@ import { DSInput } from "../components/ds/DSInput";
 import { DSSelect } from "../components/ds/DSSelect";
 import { DSTextarea } from "../components/ds/DSTextarea";
 import { Bell, CalendarClock, Database, Lock, Plus, Save, Shield, Trash2 } from "lucide-react";
+import { useSettings } from "../lib/useSettings";
+import { supabase } from "../lib/supabase";
 
 type SettingsTab =
   | "usuarios"
@@ -16,14 +19,14 @@ type SettingsTab =
   | "integracoes"
   | "logs";
 
-type Role = "admin" | "gestor" | "consultor" | "auditor" | "cliente";
+type LocalRole = "admin" | "gestor" | "consultor" | "auditor" | "cliente";
 type PermissionLevel = "nenhum" | "leitura" | "edicao" | "admin";
 
 interface UserItem {
   id: string;
   name: string;
   email: string;
-  role: Role;
+  role: string;
   status: "ativo" | "inativo";
 }
 
@@ -69,38 +72,23 @@ const tabs: { id: SettingsTab; label: string }[] = [
   { id: "logs", label: "Logs e auditoria" },
 ];
 
-const roles: Role[] = ["admin", "gestor", "consultor", "auditor", "cliente"];
+const localRoleOptions: LocalRole[] = ["admin", "gestor", "consultor", "auditor", "cliente"];
 const modules = ["Dashboard", "Clientes", "Projetos", "Auditorias", "RAI", "Documentos", "Relatorios", "Configuracoes"];
 
-const initialUsers: UserItem[] = [
-  { id: "U-001", name: "Carlos Silva", email: "carlos@certifica.com", role: "admin", status: "ativo" },
-  { id: "U-002", name: "Ana Costa", email: "ana@certifica.com", role: "gestor", status: "ativo" },
-  { id: "U-003", name: "Maria Santos", email: "maria@certifica.com", role: "consultor", status: "ativo" },
-  { id: "U-004", name: "Pedro Souza", email: "pedro@certifica.com", role: "auditor", status: "ativo" },
-];
-
-const initialMatrix: Record<Role, Record<string, PermissionLevel>> = {
-  admin: Object.fromEntries(modules.map((m) => [m, "admin"])) as Record<string, PermissionLevel>,
-  gestor: Object.fromEntries(modules.map((m) => [m, m === "Configuracoes" ? "leitura" : "edicao"])) as Record<string, PermissionLevel>,
-  consultor: Object.fromEntries(modules.map((m) => [m, ["Dashboard", "Clientes", "Projetos", "Auditorias", "Documentos"].includes(m) ? "edicao" : "leitura"])) as Record<string, PermissionLevel>,
-  auditor: Object.fromEntries(modules.map((m) => [m, ["Auditorias", "RAI", "Documentos", "Relatorios"].includes(m) ? "edicao" : "leitura"])) as Record<string, PermissionLevel>,
-  cliente: Object.fromEntries(modules.map((m) => [m, ["Dashboard", "Documentos", "Relatorios"].includes(m) ? "leitura" : "nenhum"])) as Record<string, PermissionLevel>,
-};
-
-const initialTemplates: TemplateItem[] = [
+const defaultTemplates: TemplateItem[] = [
   { id: "T-001", name: "RAI padrao Certifica", category: "Auditoria", active: true },
   { id: "T-002", name: "Plano de Acao NC", category: "Nao conformidade", active: true },
   { id: "T-003", name: "Resumo executivo mensal", category: "Relatorios", active: true },
   { id: "T-004", name: "Checklist onboarding cliente", category: "Projetos", active: false },
 ];
 
-const initialRules: WorkflowRule[] = [
+const defaultRules: WorkflowRule[] = [
   { id: "W-001", name: "Aprovacao RAI", stage: "revisao-tecnica", slaHours: 24, autoAction: true, active: true },
   { id: "W-002", name: "Revisao documental", stage: "revisao", slaHours: 48, autoAction: true, active: true },
   { id: "W-003", name: "Escalonamento NC critica", stage: "tratamento", slaHours: 12, autoAction: true, active: true },
 ];
 
-const initialIntegrations: IntegrationItem[] = [
+const defaultIntegrations: IntegrationItem[] = [
   { id: "I-001", name: "Google Drive", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 09:10" },
   { id: "I-002", name: "Google Meet", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 08:55" },
   { id: "I-003", name: "WhatsApp / Z-API", connected: false, account: "", lastSync: "Nunca" },
@@ -108,21 +96,16 @@ const initialIntegrations: IntegrationItem[] = [
   { id: "I-005", name: "Calendario", connected: true, account: "ops@certifica.com", lastSync: "19/02/2026 09:07" },
 ];
 
-const initialLogs: AuditLogItem[] = [
-  { id: "L-001", date: "19/02/2026 09:32", actor: "Carlos Silva", action: "Alterou matriz de permissao (consultor)", module: "Configuracoes" },
-  { id: "L-002", date: "19/02/2026 09:15", actor: "Ana Costa", action: "Atualizou regra SLA de aprovacao RAI", module: "Workflow" },
-  { id: "L-003", date: "19/02/2026 08:41", actor: "Sistema", action: "Sincronizacao Drive concluida", module: "Integracoes" },
-];
-
 export default function ConfiguracoesPage() {
+  const { settings, profiles, roles, loading, error, getSetting, saveAllSettings, load } = useSettings();
+
   const [tab, setTab] = useState<SettingsTab>("usuarios");
-  const [users, setUsers] = useState<UserItem[]>(initialUsers);
-  const [matrix, setMatrix] = useState(initialMatrix);
-  const [templates, setTemplates] = useState<TemplateItem[]>(initialTemplates);
-  const [rules, setRules] = useState<WorkflowRule[]>(initialRules);
-  const [integrations, setIntegrations] = useState<IntegrationItem[]>(initialIntegrations);
-  const [logs, setLogs] = useState<AuditLogItem[]>(initialLogs);
+  const [templates, setTemplates] = useState<TemplateItem[]>(defaultTemplates);
+  const [rules, setRules] = useState<WorkflowRule[]>(defaultRules);
+  const [integrations, setIntegrations] = useState<IntegrationItem[]>(defaultIntegrations);
+  const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [logSearch, setLogSearch] = useState("");
+  const [logsLoading, setLogsLoading] = useState(false);
 
   const [security, setSecurity] = useState({
     minLength: "10",
@@ -149,14 +132,123 @@ export default function ConfiguracoesPage() {
     language: "pt-BR",
     defaultNorm: "ISO 9001:2015",
   });
-  const [newUser, setNewUser] = useState({ name: "", email: "", role: "consultor" as Role });
+
+  // Build matrix from roles fetched from DB. Falls back to default permission levels.
+  const [matrix, setMatrix] = useState<Record<string, Record<string, PermissionLevel>>>({});
+
+  const [newUser, setNewUser] = useState({ name: "", email: "", role: "consultor" as LocalRole });
   const [newTemplate, setNewTemplate] = useState({ name: "", category: "" });
   const [saveStamp, setSaveStamp] = useState("");
 
-  const addLog = (action: string, module: string, actor = "Carlos Silva") => {
-    const date = new Date().toLocaleString("pt-BR");
-    setLogs((prev) => [{ id: `L-${Date.now()}`, date, actor, action, module }, ...prev]);
-  };
+  // Map DB profiles to local UserItem format
+  const users: UserItem[] = profiles.map((p) => ({
+    id: p.id,
+    name: p.full_name,
+    email: p.email,
+    role: p.role?.name ?? "consultor",
+    status: p.active ? "ativo" : "inativo",
+  }));
+
+  // Build permission matrix from DB roles whenever they change
+  useEffect(() => {
+    if (roles.length === 0) return;
+    const built: Record<string, Record<string, PermissionLevel>> = {};
+    for (const role of roles) {
+      const perms = (role.permissions as Record<string, PermissionLevel> | null) ?? {};
+      built[role.name] = {};
+      for (const m of modules) {
+        built[role.name][m] = perms[m] ?? "leitura";
+      }
+    }
+    setMatrix(built);
+  }, [roles]);
+
+  // Load settings values into local form state after settings are fetched
+  useEffect(() => {
+    if (settings.length === 0) return;
+
+    const empresa_nome = getSetting("empresa_nome");
+    const empresa_cnpj = getSetting("empresa_cnpj");
+    const empresa_timezone = getSetting("empresa_timezone");
+    const empresa_idioma = getSetting("empresa_idioma");
+    const empresa_norma = getSetting("empresa_norma");
+
+    setCompany((prev) => ({
+      legalName: (empresa_nome as string) ?? prev.legalName,
+      cnpj: (empresa_cnpj as string) ?? prev.cnpj,
+      timezone: (empresa_timezone as string) ?? prev.timezone,
+      language: (empresa_idioma as string) ?? prev.language,
+      defaultNorm: (empresa_norma as string) ?? prev.defaultNorm,
+    }));
+
+    const seg_min_length = getSetting("seg_min_senha");
+    const seg_force2fa = getSetting("seg_force2fa");
+    const seg_rotation = getSetting("seg_rotacao_dias");
+    const seg_timeout = getSetting("seg_session_timeout");
+
+    setSecurity((prev) => ({
+      minLength: (seg_min_length as string) ?? prev.minLength,
+      force2fa: seg_force2fa != null ? Boolean(seg_force2fa) : prev.force2fa,
+      rotationDays: (seg_rotation as string) ?? prev.rotationDays,
+      sessionTimeout: (seg_timeout as string) ?? prev.sessionTimeout,
+    }));
+
+    const notif_email = getSetting("notif_email_alerts");
+    const notif_whatsapp = getSetting("notif_whatsapp_alerts");
+    const notif_digest = getSetting("notif_digest_daily");
+    const notif_reminder = getSetting("notif_due_reminder_days");
+
+    setNotifications((prev) => ({
+      emailAlerts: notif_email != null ? Boolean(notif_email) : prev.emailAlerts,
+      whatsappAlerts: notif_whatsapp != null ? Boolean(notif_whatsapp) : prev.whatsappAlerts,
+      digestDaily: notif_digest != null ? Boolean(notif_digest) : prev.digestDaily,
+      dueReminderDays: (notif_reminder as string) ?? prev.dueReminderDays,
+    }));
+
+    const lgpd_retention = getSetting("lgpd_retencao_meses");
+    const lgpd_anon = getSetting("lgpd_anonimizar_apos");
+    const lgpd_version = getSetting("lgpd_consent_versao");
+    const lgpd_text = getSetting("lgpd_consent_texto");
+
+    setLgpd((prev) => ({
+      retentionMonths: (lgpd_retention as string) ?? prev.retentionMonths,
+      anonymizeAfter: (lgpd_anon as string) ?? prev.anonymizeAfter,
+      consentVersion: (lgpd_version as string) ?? prev.consentVersion,
+      consentText: (lgpd_text as string) ?? prev.consentText,
+    }));
+  }, [settings, getSetting]);
+
+  // Fetch audit_logs from Supabase
+  useEffect(() => {
+    const fetchLogs = async () => {
+      setLogsLoading(true);
+      try {
+        const { data, error: err } = await supabase
+          .from("audit_logs")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(100);
+
+        if (err) throw err;
+
+        const mapped: AuditLogItem[] = (data ?? []).map((l: any) => ({
+          id: l.id,
+          date: new Date(l.created_at).toLocaleString("pt-BR"),
+          actor: l.usuario_id ?? "Sistema",
+          action: `${l.acao} em ${l.tabela} (id: ${l.registro_id})`,
+          module: l.tabela,
+        }));
+
+        setLogs(mapped);
+      } catch {
+        // If audit_logs table is unavailable, leave empty
+      } finally {
+        setLogsLoading(false);
+      }
+    };
+
+    fetchLogs();
+  }, []);
 
   const filteredLogs = useMemo(() => {
     if (!logSearch.trim()) return logs;
@@ -164,46 +256,50 @@ export default function ConfiguracoesPage() {
     return logs.filter((l) => `${l.actor} ${l.action} ${l.module}`.toLowerCase().includes(term));
   }, [logs, logSearch]);
 
-  const saveAll = () => {
-    const payload = { users, matrix, templates, rules, integrations, security, notifications, lgpd, company };
-    localStorage.setItem("certifica:settings", JSON.stringify(payload));
-    const now = new Date().toLocaleString("pt-BR");
-    setSaveStamp(now);
-    addLog("Salvou configuracoes globais", "Configuracoes");
-  };
+  const saveAll = async () => {
+    const settingMap: Record<string, unknown> = {
+      empresa_nome: company.legalName,
+      empresa_cnpj: company.cnpj,
+      empresa_timezone: company.timezone,
+      empresa_idioma: company.language,
+      empresa_norma: company.defaultNorm,
+      seg_min_senha: security.minLength,
+      seg_force2fa: security.force2fa,
+      seg_rotacao_dias: security.rotationDays,
+      seg_session_timeout: security.sessionTimeout,
+      notif_email_alerts: notifications.emailAlerts,
+      notif_whatsapp_alerts: notifications.whatsappAlerts,
+      notif_digest_daily: notifications.digestDaily,
+      notif_due_reminder_days: notifications.dueReminderDays,
+      lgpd_retencao_meses: lgpd.retentionMonths,
+      lgpd_anonimizar_apos: lgpd.anonymizeAfter,
+      lgpd_consent_versao: lgpd.consentVersion,
+      lgpd_consent_texto: lgpd.consentText,
+    };
 
-  const loadAll = () => {
-    try {
-      const raw = localStorage.getItem("certifica:settings");
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        users: UserItem[];
-        matrix: typeof matrix;
-        templates: TemplateItem[];
-        rules: WorkflowRule[];
-        integrations: IntegrationItem[];
-        security: typeof security;
-        notifications: typeof notifications;
-        lgpd: typeof lgpd;
-        company: typeof company;
-      };
-      setUsers(parsed.users ?? initialUsers);
-      setMatrix(parsed.matrix ?? initialMatrix);
-      setTemplates(parsed.templates ?? initialTemplates);
-      setRules(parsed.rules ?? initialRules);
-      setIntegrations(parsed.integrations ?? initialIntegrations);
-      setSecurity(parsed.security ?? security);
-      setNotifications(parsed.notifications ?? notifications);
-      setLgpd(parsed.lgpd ?? lgpd);
-      setCompany(parsed.company ?? company);
-      addLog("Carregou configuracoes salvas", "Configuracoes");
-    } catch {
-      // noop
+    const ok = await saveAllSettings(settingMap);
+    if (ok) {
+      const now = new Date().toLocaleString("pt-BR");
+      setSaveStamp(now);
+      toast.success("Configuracoes salvas com sucesso.");
+    } else {
+      toast.error("Erro ao salvar configuracoes. Tente novamente.");
     }
   };
 
+  const loadAll = async () => {
+    await load();
+    toast.info("Configuracoes recarregadas do banco de dados.");
+  };
+
+  // Roles list for the permission matrix columns: from DB or fallback to localRoleOptions names
+  const roleNames: string[] = roles.length > 0 ? roles.map((r) => r.name) : localRoleOptions;
+
   const renderUsuarios = () => (
     <div className="space-y-4">
+      {loading && (
+        <div className="text-[12px] text-certifica-500 px-1">Carregando usuarios...</div>
+      )}
       <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Usuarios e perfis</span>}>
         <div className="space-y-2">
           {users.map((u) => (
@@ -217,17 +313,18 @@ export default function ConfiguracoesPage() {
                 <DSSelect
                   label=""
                   value={u.role}
-                  onChange={(e) => {
-                    const role = e.target.value as Role;
-                    setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role } : x)));
-                    addLog(`Alterou perfil de ${u.name} para ${role}`, "Usuarios");
+                  onChange={() => {
+                    // Role changes would require updating the DB profile; kept read-only for now
                   }}
-                  options={roles.map((r) => ({ value: r, label: r }))}
+                  options={roleNames.map((r) => ({ value: r, label: r }))}
                   className="h-7 text-[11px]"
                 />
               </div>
             </div>
           ))}
+          {users.length === 0 && !loading && (
+            <div className="text-[12px] text-certifica-500 py-2">Nenhum usuario encontrado.</div>
+          )}
         </div>
       </DSCard>
 
@@ -235,7 +332,7 @@ export default function ConfiguracoesPage() {
         <div className="grid grid-cols-3 gap-2">
           <DSInput label="Nome" value={newUser.name} onChange={(e) => setNewUser((p) => ({ ...p, name: e.target.value }))} />
           <DSInput label="E-mail" value={newUser.email} onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))} />
-          <DSSelect label="Perfil" value={newUser.role} onChange={(e) => setNewUser((p) => ({ ...p, role: e.target.value as Role }))} options={roles.map((r) => ({ value: r, label: r }))} />
+          <DSSelect label="Perfil" value={newUser.role} onChange={(e) => setNewUser((p) => ({ ...p, role: e.target.value as LocalRole }))} options={localRoleOptions.map((r) => ({ value: r, label: r }))} />
         </div>
         <div className="flex justify-end mt-3">
           <DSButton
@@ -243,10 +340,8 @@ export default function ConfiguracoesPage() {
             icon={<Plus className="w-3 h-3" strokeWidth={1.5} />}
             onClick={() => {
               if (!newUser.name.trim() || !newUser.email.trim()) return;
-              const user: UserItem = { id: `U-${Date.now()}`, name: newUser.name.trim(), email: newUser.email.trim(), role: newUser.role, status: "ativo" };
-              setUsers((prev) => [user, ...prev]);
+              toast.info("Criacao de usuarios requer acesso ao painel de autenticacao.");
               setNewUser({ name: "", email: "", role: "consultor" });
-              addLog(`Criou usuario ${user.name}`, "Usuarios");
             }}
           >
             Criar usuario
@@ -273,7 +368,7 @@ export default function ConfiguracoesPage() {
             <thead>
               <tr className="border-b border-certifica-200">
                 <th className="text-left text-[11px] text-certifica-500 py-2">Modulo</th>
-                {roles.map((r) => (
+                {roleNames.map((r) => (
                   <th key={r} className="text-left text-[11px] text-certifica-500 py-2 capitalize">{r}</th>
                 ))}
               </tr>
@@ -282,13 +377,16 @@ export default function ConfiguracoesPage() {
               {modules.map((m) => (
                 <tr key={m} className="border-b border-certifica-200/70">
                   <td className="py-2 text-[12px] text-certifica-900">{m}</td>
-                  {roles.map((r) => (
+                  {roleNames.map((r) => (
                     <td key={`${m}-${r}`} className="py-2 pr-2">
                       <select
-                        value={matrix[r][m]}
+                        value={matrix[r]?.[m] ?? "leitura"}
                         onChange={(e) => {
                           const level = e.target.value as PermissionLevel;
-                          setMatrix((prev) => ({ ...prev, [r]: { ...prev[r], [m]: level } }));
+                          setMatrix((prev) => ({
+                            ...prev,
+                            [r]: { ...(prev[r] ?? {}), [m]: level },
+                          }));
                         }}
                         className="h-7 w-full px-2 border border-certifica-200 rounded-[4px] text-[11px]"
                       >
@@ -360,7 +458,6 @@ export default function ConfiguracoesPage() {
                     checked={t.active}
                     onChange={(e) => {
                       setTemplates((prev) => prev.map((x) => (x.id === t.id ? { ...x, active: e.target.checked } : x)));
-                      addLog(`Atualizou modelo ${t.name}`, "Modelos");
                     }}
                   />
                   Ativo
@@ -369,7 +466,6 @@ export default function ConfiguracoesPage() {
                   className="p-1 text-certifica-500 hover:text-nao-conformidade"
                   onClick={() => {
                     setTemplates((prev) => prev.filter((x) => x.id !== t.id));
-                    addLog(`Removeu modelo ${t.name}`, "Modelos");
                   }}
                 >
                   <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
@@ -393,7 +489,7 @@ export default function ConfiguracoesPage() {
               const item: TemplateItem = { id: `T-${Date.now()}`, name: newTemplate.name.trim(), category: newTemplate.category.trim(), active: true };
               setTemplates((prev) => [item, ...prev]);
               setNewTemplate({ name: "", category: "" });
-              addLog(`Criou modelo ${item.name}`, "Modelos");
+              toast.success(`Modelo "${item.name}" criado.`);
             }}
           >
             Criar modelo
@@ -450,7 +546,7 @@ export default function ConfiguracoesPage() {
         <div className="text-[12px] text-certifica-500">
           Total de regras ativas: <strong className="text-certifica-900">{rules.filter((r) => r.active).length}</strong> ·
           Automacoes ligadas: <strong className="text-certifica-900">{rules.filter((r) => r.autoAction).length}</strong> ·
-          SLA medio: <strong className="text-certifica-900">{Math.round(rules.reduce((acc, r) => acc + r.slaHours, 0) / rules.length)}h</strong>
+          SLA medio: <strong className="text-certifica-900">{rules.length > 0 ? Math.round(rules.reduce((acc, r) => acc + r.slaHours, 0) / rules.length) : 0}h</strong>
         </div>
       </DSCard>
     </div>
@@ -474,7 +570,7 @@ export default function ConfiguracoesPage() {
                     onChange={(e) => {
                       const connected = e.target.checked;
                       setIntegrations((prev) => prev.map((x) => (x.id === i.id ? { ...x, connected } : x)));
-                      addLog(`${connected ? "Conectou" : "Desconectou"} ${i.name}`, "Integracoes");
+                      toast.info(`${connected ? "Conectado" : "Desconectado"}: ${i.name}`);
                     }}
                   />
                   Conectado
@@ -491,7 +587,13 @@ export default function ConfiguracoesPage() {
     <div className="space-y-4">
       <DSCard header={<span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Logs/auditoria do sistema</span>}>
         <DSInput label="Buscar log" value={logSearch} onChange={(e) => setLogSearch(e.target.value)} placeholder="ator, acao, modulo..." />
+        {logsLoading && (
+          <div className="text-[12px] text-certifica-500 mt-3">Carregando logs...</div>
+        )}
         <div className="space-y-1.5 mt-3">
+          {filteredLogs.length === 0 && !logsLoading && (
+            <div className="text-[12px] text-certifica-500">Nenhum log encontrado.</div>
+          )}
           {filteredLogs.map((l) => (
             <div key={l.id} className="border border-certifica-200 rounded-[3px] px-2.5 py-1.5 text-[11px] text-certifica-500">
               {l.date} · <span className="text-certifica-dark">{l.actor}</span> · {l.action} · {l.module}
@@ -504,6 +606,12 @@ export default function ConfiguracoesPage() {
 
   return (
     <div className="p-5 space-y-4">
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-[4px] px-3 py-2 text-[12px] text-red-700">
+          Erro ao carregar dados: {error}
+        </div>
+      )}
+
       <div className="flex items-end justify-between">
         <div>
           <h2 className="text-certifica-900">Configuracoes</h2>
@@ -527,7 +635,9 @@ export default function ConfiguracoesPage() {
             <span className="text-[11px] text-certifica-500">Usuarios ativos</span>
             <Shield className="w-3.5 h-3.5 text-conformidade" strokeWidth={1.5} />
           </div>
-          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>{users.filter((u) => u.status === "ativo").length}</div>
+          <div className="text-[22px] text-certifica-900 mt-1" style={{ fontWeight: 600 }}>
+            {loading ? "..." : users.filter((u) => u.status === "ativo").length}
+          </div>
         </DSCard>
         <DSCard>
           <div className="flex items-center justify-between">

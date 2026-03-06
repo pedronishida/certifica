@@ -363,7 +363,7 @@ export default function NormasPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-[1fr_420px] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
         {/* Left – norm list */}
         <div className="space-y-3">
           <div className="flex items-center gap-2">

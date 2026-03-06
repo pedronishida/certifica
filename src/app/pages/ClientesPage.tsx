@@ -191,9 +191,9 @@ export default function ClientesPage() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
       {/* ── Main list ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-[380px] lg:min-h-0">
         <div className="px-5 pt-5 pb-0">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -297,7 +297,7 @@ export default function ClientesPage() {
 
       {/* ── Detail Panel with 360 View ── */}
       {selected && (
-        <div className="w-[340px] flex-shrink-0 border-l border-certifica-200 bg-white flex flex-col overflow-y-auto">
+        <div className="w-full lg:w-[340px] lg:flex-shrink-0 border-t lg:border-t-0 lg:border-l border-certifica-200 bg-white flex flex-col overflow-y-auto">
           {/* Header */}
           <div className="px-4 py-3 border-b border-certifica-200">
             <div className="flex items-center justify-between mb-2">

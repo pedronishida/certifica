@@ -33,6 +33,8 @@ import { useProjetos } from "../lib/useProjetos";
 import { useAuditLog } from "../lib/useAuditLog";
 import { APIFallback } from "../components/ErrorBoundary";
 import type { MeetingAction } from "../lib/database.types";
+import { generateMeetingSummary } from "../lib/openai";
+import { toast as toastNotify } from "sonner";
 
 type BadgeVariant = "conformidade" | "nao-conformidade" | "observacao" | "oportunidade" | "outline";
 type MeetingStatus = "agendada" | "gravando" | "processando" | "transcrita" | "concluida" | "cancelada";
@@ -111,6 +113,7 @@ export default function ReunioesPage() {
   const [editingResume, setEditingResume] = useState(false);
   const [resumeText, setResumeText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [generatingResume, setGeneratingResume] = useState(false);
   const [showNewAction, setShowNewAction] = useState(false);
   const [newAction, setNewAction] = useState<MeetingAction>({ descricao: "", responsavel: "", prazo: "", concluida: false });
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -260,6 +263,30 @@ export default function ReunioesPage() {
     setSaving(false);
   };
 
+  const handleGenerateResumeAI = async () => {
+    if (!selected) return;
+    const transcricao = selected.transcricao ?? [];
+    if (transcricao.length === 0) {
+      toastNotify.warning("Nenhuma transcrição disponível para gerar resumo.");
+      return;
+    }
+    setGeneratingResume(true);
+    try {
+      const transcricaoText = transcricao.map((l: any) => `[${l.time}] ${l.speaker}: ${l.text}`).join("\n");
+      const resumo = await generateMeetingSummary(
+        selected.titulo,
+        selected.participantes ?? [],
+        transcricaoText
+      );
+      await editResume(selected.id, resumo);
+      toastNotify.success("Resumo gerado com sucesso!");
+    } catch (err: any) {
+      toastNotify.error("Erro ao gerar resumo: " + (err?.message ?? "tente novamente"));
+    } finally {
+      setGeneratingResume(false);
+    }
+  };
+
   const handleComplete = async () => {
     if (!selected) return;
     await completeMeeting(selected.id);
@@ -346,8 +373,8 @@ export default function ReunioesPage() {
   /* ── Loading / Error ── */
   if (loading) {
     return (
-      <div className="flex h-full">
-        <div className="w-[300px] flex-shrink-0 border-r border-certifica-200 bg-white flex flex-col">
+      <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
+        <div className="w-full lg:w-[300px] lg:flex-shrink-0 border-b lg:border-b-0 lg:border-r border-certifica-200 bg-white flex flex-col min-h-[200px] lg:min-h-0">
           <div className="px-3 py-3 border-b border-certifica-200">
             <div className="h-6 w-20 bg-certifica-200/60 rounded animate-pulse mb-2" />
             <div className="h-7 w-full bg-certifica-200/60 rounded animate-pulse" />
@@ -362,7 +389,7 @@ export default function ReunioesPage() {
             ))}
           </div>
         </div>
-        <div className="flex-1 flex items-center justify-center bg-certifica-50/50">
+        <div className="flex-1 flex items-center justify-center bg-certifica-50/50 min-h-[200px] lg:min-h-0">
           <Loader2 className="w-6 h-6 text-certifica-500/40 animate-spin" />
         </div>
       </div>
@@ -519,9 +546,9 @@ export default function ReunioesPage() {
         </div>
       )}
 
-      <div className="flex h-full">
+      <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
         {/* Left — meeting list */}
-        <div className="w-[300px] flex-shrink-0 border-r border-certifica-200 bg-white flex flex-col">
+        <div className="w-full lg:w-[300px] lg:flex-shrink-0 border-b lg:border-b-0 lg:border-r border-certifica-200 bg-white flex flex-col min-h-[260px] lg:min-h-0">
           <div className="px-3 py-3 border-b border-certifica-200">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Reuniões</span>
@@ -794,6 +821,15 @@ export default function ReunioesPage() {
                                 <Edit3 className="w-3 h-3" strokeWidth={1.5} />
                               </button>
                             )}
+                            <button
+                              onClick={handleGenerateResumeAI}
+                              disabled={generatingResume}
+                              className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded bg-certifica-accent/10 text-certifica-accent hover:bg-certifica-accent/20 disabled:opacity-50 cursor-pointer"
+                              title="Gerar resumo automaticamente"
+                            >
+                              {generatingResume ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Bot className="w-2.5 h-2.5" />}
+                              {generatingResume ? "Gerando…" : "Gerar Resumo"}
+                            </button>
                           </div>
                         </div>
                         <div className="px-4 py-3">

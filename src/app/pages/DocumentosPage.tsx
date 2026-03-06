@@ -1,5 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { DSButton } from "../components/ds/DSButton";
+import { toast } from "sonner";
+import { useDocuments } from "../lib/useDocuments";
+import type { DocumentWithRelations } from "../lib/useDocuments";
 
 import {
   Search,
@@ -63,89 +66,6 @@ interface GedDocument {
   trail: AuditTrailEntry[];
 }
 
-
-const initialDocuments: GedDocument[] = [
-  {
-    id: "1",
-    name: "PQ-MC-003 — Controle de Medição",
-    type: "pdf",
-    size: "2.4 MB",
-    modified: "18/02/2026",
-    version: "4.0",
-    category: "Procedimento",
-    client: "Metalurgica Acoforte",
-    project: "ISO 9001:2015",
-    status: "aprovado",
-    clause: "7.1.5",
-    evidence: "EV-002",
-    permission: "aprovacao",
-    approver: "Carlos Silva",
-    approvedAt: "18/02/2026",
-    expiresAt: "18/02/2027",
-    revisions: [
-      { version: "4.0", date: "18/02/2026 14:30", author: "Carlos Silva", note: "Atualizado conforme NC de auditoria — item 7.1.6" },
-      { version: "3.2", date: "10/01/2026 09:15", author: "Ana Costa", note: "Incluído novo equipamento no escopo" },
-    ],
-    trail: [
-      { date: "18/02/2026 14:34", action: "Download", actor: "Carlos Silva" },
-      { date: "18/02/2026 14:31", action: "Aprovado", actor: "Carlos Silva" },
-      { date: "18/02/2026 14:28", action: "Upload versão 4.0", actor: "Ana Costa" },
-    ],
-  },
-  {
-    id: "2",
-    name: "Plano de Ação — NC Auditoria Jan/2026",
-    type: "xlsx",
-    size: "89 KB",
-    modified: "14/02/2026",
-    version: "1.2",
-    category: "Plano de acao",
-    client: "Metalurgica Acoforte",
-    project: "ISO 9001:2015",
-    status: "revisao",
-    clause: "10.2",
-    evidence: "NC-040",
-    permission: "edicao",
-    expiresAt: "14/03/2026",
-    revisions: [{ version: "1.2", date: "14/02/2026 11:10", author: "Ana Costa", note: "Ajuste de prazo e responsável." }],
-    trail: [{ date: "14/02/2026 11:12", action: "Acesso", actor: "Maria Santos" }],
-  },
-  {
-    id: "3",
-    name: "APPCC — Plano de Análise de Perigos",
-    type: "pdf",
-    size: "2.9 MB",
-    modified: "03/02/2026",
-    version: "6.0",
-    category: "Plano",
-    client: "AgroVale Alimentos",
-    project: "ISO 22000:2018",
-    status: "rascunho",
-    clause: "8.5",
-    evidence: "EV-117",
-    permission: "edicao",
-    revisions: [{ version: "6.0", date: "03/02/2026 09:00", author: "Pedro Souza", note: "Rascunho inicial de revisão anual." }],
-    trail: [{ date: "03/02/2026 09:05", action: "Upload versão 6.0", actor: "Pedro Souza" }],
-  },
-  {
-    id: "4",
-    name: "Relatório de Análise Energética — 2025",
-    type: "pdf",
-    size: "3.2 MB",
-    modified: "12/02/2026",
-    version: "1.0",
-    category: "Relatorio",
-    client: "Grupo Energis",
-    project: "ISO 50001:2018",
-    status: "obsoleto",
-    clause: "9.1",
-    evidence: "EV-500",
-    permission: "somente_leitura",
-    expiresAt: "31/01/2026",
-    revisions: [{ version: "1.0", date: "12/02/2026 17:00", author: "Ana Costa", note: "Documento substituído por edição 2026." }],
-    trail: [{ date: "13/02/2026 08:45", action: "Marcado como obsoleto", actor: "Ana Costa" }],
-  },
-];
 
 const fileIcon = (type: DocType) => {
   switch (type) {
@@ -214,10 +134,48 @@ function parseVersionParts(version: string): { major: number; minor: number } {
   };
 }
 
+function mapDocToGed(doc: DocumentWithRelations): GedDocument {
+  const dbStatusMap: Record<string, DocStatus> = {
+    "rascunho": "rascunho",
+    "em-revisao": "revisao",
+    "aprovado": "aprovado",
+    "obsoleto": "obsoleto",
+  };
+
+  return {
+    id: doc.id,
+    name: doc.titulo,
+    type: inferDocTypeFromFileName(doc.arquivo_nome),
+    size: formatFileSize(doc.tamanho_bytes),
+    modified: doc.updated_at.split("T")[0].split("-").reverse().join("/"),
+    version: String(doc.versao) + ".0",
+    category: doc.tipo.charAt(0).toUpperCase() + doc.tipo.slice(1),
+    client: doc.cliente_nome ?? "",
+    project: doc.projeto_titulo ?? doc.norma ?? "",
+    status: dbStatusMap[doc.status] ?? "rascunho",
+    clause: doc.tags?.[0] ?? "",
+    evidence: doc.tags?.[1] ?? "",
+    permission: "edicao",
+    approver: doc.aprovado_por || undefined,
+    revisions: [],
+    trail: [],
+  };
+}
+
+function parseSizeToBytes(sizeStr: string): number {
+  const str = sizeStr.trim().toUpperCase();
+  const num = parseFloat(str);
+  if (Number.isNaN(num)) return 0;
+  if (str.includes("GB")) return Math.round(num * 1024 * 1024 * 1024);
+  if (str.includes("MB")) return Math.round(num * 1024 * 1024);
+  if (str.includes("KB")) return Math.round(num * 1024);
+  return Math.round(num);
+}
+
 
 export default function DocumentosPage() {
-  const [documents, setDocuments] = useState<GedDocument[]>(initialDocuments);
-  const [selectedDoc, setSelectedDoc] = useState<string | null>("1");
+  const { documents: rawDocs, loading, error, create, approve, remove } = useDocuments();
+  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterClient, setFilterClient] = useState("todos");
@@ -226,15 +184,23 @@ export default function DocumentosPage() {
   const [filterType, setFilterType] = useState("todos");
   const [filterStatus, setFilterStatus] = useState("todos");
   const [showUpload, setShowUpload] = useState(false);
+  const [localTrails, setLocalTrails] = useState<Record<string, AuditTrailEntry[]>>({});
 
+  const gedDocuments = rawDocs.map(mapDocToGed);
 
-  const clients = [...new Set(documents.map((d) => d.client))];
-  const projects = [...new Set(documents.map((d) => d.project))];
-  const categories = [...new Set(documents.map((d) => d.category))];
-  const types = [...new Set(documents.map((d) => d.type))];
+  useEffect(() => {
+    if (selectedDoc === null && gedDocuments.length > 0) {
+      setSelectedDoc(gedDocuments[0].id);
+    }
+  }, [gedDocuments, selectedDoc]);
+
+  const clients = [...new Set(gedDocuments.map((d) => d.client))];
+  const projects = [...new Set(gedDocuments.map((d) => d.project))];
+  const categories = [...new Set(gedDocuments.map((d) => d.category))];
+  const types = [...new Set(gedDocuments.map((d) => d.type))];
 
   const filtered = useMemo(() => {
-    return documents.filter((d) => {
+    return gedDocuments.filter((d) => {
       if (filterClient !== "todos" && d.client !== filterClient) return false;
       if (filterProject !== "todos" && d.project !== filterProject) return false;
       if (filterCategory !== "todos" && d.category !== filterCategory) return false;
@@ -243,43 +209,63 @@ export default function DocumentosPage() {
       if (searchQuery && !`${d.name} ${d.client} ${d.project} ${d.clause}`.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       return true;
     });
-  }, [documents, filterClient, filterProject, filterCategory, filterType, filterStatus, searchQuery]);
+  }, [gedDocuments, filterClient, filterProject, filterCategory, filterType, filterStatus, searchQuery]);
 
-  const selected = documents.find((d) => d.id === selectedDoc);
+  const selected = gedDocuments.find((d) => d.id === selectedDoc);
+  const selectedWithTrail: GedDocument | undefined = selected
+    ? { ...selected, trail: [...(localTrails[selected.id] ?? []), ...selected.trail] }
+    : undefined;
 
-  const vencidos = documents.filter((d) => d.expiresAt && new Date(d.expiresAt.split("/").reverse().join("-")) < new Date()).length;
+  const vencidos = gedDocuments.filter((d) => d.expiresAt && new Date(d.expiresAt.split("/").reverse().join("-")) < new Date()).length;
 
   const addTrail = (docId: string, action: string) => {
     const now = new Date().toLocaleString("pt-BR");
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === docId ? { ...d, trail: [{ date: now, action, actor: "Carlos Silva" }, ...d.trail] } : d)),
-    );
+    setLocalTrails((prev) => ({
+      ...prev,
+      [docId]: [{ date: now, action, actor: "Carlos Silva" }, ...(prev[docId] ?? [])],
+    }));
   };
 
-  const approveSelected = () => {
+  const approveSelected = async () => {
     if (!selected) return;
-    const today = new Date().toLocaleDateString("pt-BR");
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === selected.id ? { ...d, status: "aprovado", approver: "Carlos Silva", approvedAt: today } : d)),
-    );
-    addTrail(selected.id, "Documento aprovado com assinatura");
+    const ok = await approve(selected.id, "Carlos Silva");
+    if (ok) {
+      addTrail(selected.id, "Documento aprovado com assinatura");
+      toast.success("Documento aprovado!");
+    }
   };
 
   const exportAuditPackage = () => {
     const pkgCount = filtered.length;
-    window.alert(`Pacote documental para auditoria externa gerado com ${pkgCount} documento(s).`);
+    toast.info(`Pacote documental para auditoria externa gerado com ${pkgCount} documento(s).`);
   };
 
 
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-[13px] text-certifica-500">
+        Carregando documentos...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center text-[13px] text-nao-conformidade">
+        Erro ao carregar documentos: {error}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full">
-      <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-[380px] lg:min-h-0">
         <div className="px-5 pt-5 pb-0">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-certifica-900">Documentos (GED)</h2>
               <p className="text-[12px] text-certifica-500 mt-0.5">
-                {documents.length} documentos · {clients.length} clientes · {vencidos} vencido(s)/obsoleto(s)
+                {gedDocuments.length} documentos · {clients.length} clientes · {vencidos} vencido(s)/obsoleto(s)
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -377,32 +363,32 @@ export default function DocumentosPage() {
         </div>
       </div>
 
-      {selected && (
-        <div className="w-[320px] flex-shrink-0 border-l border-certifica-200 bg-white flex flex-col overflow-y-auto">
+      {selectedWithTrail && (
+        <div className="w-full lg:w-[320px] lg:flex-shrink-0 border-t lg:border-t-0 lg:border-l border-certifica-200 bg-white flex flex-col overflow-y-auto">
           <div className="px-4 py-3 border-b border-certifica-200">
-            <div className="flex items-center gap-2 mb-2">{fileIcon(selected.type)}<span className="text-[12px] font-mono">{selected.version}</span></div>
-            <div className="text-[13px] text-certifica-900 mb-1" style={{ fontWeight: 600 }}>{selected.name}</div>
-            <div className="text-[11px] text-certifica-500 mb-3">{selected.category} · {selected.size}</div>
+            <div className="flex items-center gap-2 mb-2">{fileIcon(selectedWithTrail.type)}<span className="text-[12px] font-mono">{selectedWithTrail.version}</span></div>
+            <div className="text-[13px] text-certifica-900 mb-1" style={{ fontWeight: 600 }}>{selectedWithTrail.name}</div>
+            <div className="text-[11px] text-certifica-500 mb-3">{selectedWithTrail.category} · {selectedWithTrail.size}</div>
             <div className="flex gap-1.5">
-              <DSButton variant="outline" size="sm" className="flex-1" icon={<Download className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selected.id, "Download")}>Baixar</DSButton>
-              <DSButton variant="outline" size="sm" className="flex-1" icon={<Eye className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selected.id, "Abertura de documento")}>Abrir</DSButton>
+              <DSButton variant="outline" size="sm" className="flex-1" icon={<Download className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selectedWithTrail.id, "Download")}>Baixar</DSButton>
+              <DSButton variant="outline" size="sm" className="flex-1" icon={<Eye className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selectedWithTrail.id, "Abertura de documento")}>Abrir</DSButton>
             </div>
           </div>
 
           <div className="px-4 py-3 border-b border-certifica-200">
             <div className="text-[10px] tracking-[0.06em] uppercase text-certifica-500 mb-2">Compliance</div>
             <div className="space-y-1.5 text-[11px]">
-              <div className="flex justify-between"><span className="text-certifica-500">Cláusula</span><span className="text-certifica-dark font-mono">{selected.clause}</span></div>
-              <div className="flex justify-between"><span className="text-certifica-500">Evidência</span><span className="text-certifica-dark font-mono">{selected.evidence}</span></div>
-              <div className="flex justify-between"><span className="text-certifica-500">Permissão</span><span className="text-certifica-dark">{permissionLabel(selected.permission)}</span></div>
-              <div className="flex justify-between"><span className="text-certifica-500">Aprovador</span><span className="text-certifica-dark">{selected.approver ?? "—"}</span></div>
-              <div className="flex justify-between"><span className="text-certifica-500">Validação</span><span className="text-certifica-dark">{selected.approvedAt ?? "Pendente"}</span></div>
+              <div className="flex justify-between"><span className="text-certifica-500">Cláusula</span><span className="text-certifica-dark font-mono">{selectedWithTrail.clause}</span></div>
+              <div className="flex justify-between"><span className="text-certifica-500">Evidência</span><span className="text-certifica-dark font-mono">{selectedWithTrail.evidence}</span></div>
+              <div className="flex justify-between"><span className="text-certifica-500">Permissão</span><span className="text-certifica-dark">{permissionLabel(selectedWithTrail.permission)}</span></div>
+              <div className="flex justify-between"><span className="text-certifica-500">Aprovador</span><span className="text-certifica-dark">{selectedWithTrail.approver ?? "—"}</span></div>
+              <div className="flex justify-between"><span className="text-certifica-500">Validação</span><span className="text-certifica-dark">{selectedWithTrail.approvedAt ?? "Pendente"}</span></div>
             </div>
             <div className="mt-2 flex gap-1.5">
               <DSButton size="sm" variant="outline" className="flex-1" icon={<Shield className="w-3 h-3" strokeWidth={1.5} />} onClick={approveSelected}>
                 Aprovar
               </DSButton>
-              <DSButton size="sm" variant="outline" className="flex-1" icon={<CheckCircle2 className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selected.id, "Assinatura digital registrada")}>
+              <DSButton size="sm" variant="outline" className="flex-1" icon={<CheckCircle2 className="w-3 h-3" strokeWidth={1.5} />} onClick={() => addTrail(selectedWithTrail.id, "Assinatura digital registrada")}>
                 Assinar
               </DSButton>
             </div>
@@ -410,15 +396,15 @@ export default function DocumentosPage() {
 
           <div className="px-4 py-3 border-b border-certifica-200">
             <div className="flex items-center gap-1.5 mb-2"><AlertTriangle className="w-3 h-3 text-observacao" strokeWidth={1.5} /><span className="text-[10px] tracking-[0.06em] uppercase text-certifica-500">Validade</span></div>
-            <div className="text-[11px] text-certifica-500">Vencimento: {selected.expiresAt ?? "Não definido"}</div>
-            {selected.status === "obsoleto" && <div className="text-[11px] text-nao-conformidade mt-1">Documento obsoleto detectado.</div>}
+            <div className="text-[11px] text-certifica-500">Vencimento: {selectedWithTrail.expiresAt ?? "Não definido"}</div>
+            {selectedWithTrail.status === "obsoleto" && <div className="text-[11px] text-nao-conformidade mt-1">Documento obsoleto detectado.</div>}
           </div>
 
           <div className="px-4 py-3 border-b border-certifica-200">
             <div className="flex items-center gap-1.5 mb-2"><History className="w-3 h-3 text-certifica-500" strokeWidth={1.5} /><span className="text-[10px] tracking-[0.06em] uppercase text-certifica-500">Histórico de revisão</span></div>
             <div className="space-y-2">
-              {selected.revisions.map((rev) => (
-                <div key={`${selected.id}-${rev.version}-${rev.date}`} className="text-[11px]">
+              {selectedWithTrail.revisions.map((rev) => (
+                <div key={`${selectedWithTrail.id}-${rev.version}-${rev.date}`} className="text-[11px]">
                   <div className="flex justify-between"><span className="font-mono text-certifica-700">{rev.version}</span><span className="text-certifica-500">{rev.date.split(" ")[0]}</span></div>
                   <p className="text-certifica-dark">{rev.note}</p>
                   <span className="text-certifica-500/70">por {rev.author}</span>
@@ -430,8 +416,8 @@ export default function DocumentosPage() {
           <div className="px-4 py-3">
             <div className="flex items-center gap-1.5 mb-2"><Calendar className="w-3 h-3 text-certifica-500" strokeWidth={1.5} /><span className="text-[10px] tracking-[0.06em] uppercase text-certifica-500">Trilha de acesso/download</span></div>
             <div className="space-y-1.5">
-              {selected.trail.map((tr) => (
-                <div key={`${selected.id}-${tr.date}-${tr.action}`} className="text-[11px] text-certifica-500">
+              {selectedWithTrail.trail.map((tr) => (
+                <div key={`${selectedWithTrail.id}-${tr.date}-${tr.action}`} className="text-[11px] text-certifica-500">
                   {tr.date} · {tr.action} · {tr.actor}
                 </div>
               ))}
@@ -442,47 +428,48 @@ export default function DocumentosPage() {
 
       {showUpload && (
         <UploadModal
-          existingDocuments={documents}
+          existingDocuments={gedDocuments}
           onClose={() => setShowUpload(false)}
-          onUpload={(payload) => {
-            const nowDate = new Date().toLocaleDateString("pt-BR");
-            const nowDateTime = new Date().toLocaleString("pt-BR");
-            const metadata = suggestMetadata({ name: payload.name, type: payload.type, project: payload.project });
-            const nextId = String(documents.reduce((max, d) => Math.max(max, Number(d.id)), 0) + 1);
-            const version = payload.versionType === "major" ? `${payload.baseVersion + 1}.0` : `${payload.baseVersion}.${payload.minor + 1}`;
-            const normalizedIncoming = normalizeName(payload.name);
-            const duplicate = documents.find(
-              (doc) =>
-                normalizeName(doc.name) === normalizedIncoming &&
-                doc.client === payload.client &&
-                doc.project === payload.project &&
-                doc.version === version
-            );
-            if (duplicate) {
-              window.alert(`Documento duplicado detectado: ${duplicate.name} (${duplicate.version}) para ${duplicate.client}.`);
-              return;
-            }
-            const doc: GedDocument = {
-              id: nextId,
-              name: payload.name,
-              type: payload.type,
-              size: payload.size,
-              modified: nowDate,
-              version,
-              category: payload.category || metadata.category,
-              client: payload.client,
-              project: payload.project,
-              status: "rascunho",
-              clause: payload.clause || metadata.clause,
-              evidence: payload.evidence || "EV-PENDENTE",
-              permission: payload.permission,
-              expiresAt: payload.expiresAt || undefined,
-              revisions: [{ version, date: nowDateTime, author: "Carlos Silva", note: payload.justification }],
-              trail: [{ date: nowDateTime, action: `Upload versão ${version}`, actor: "Carlos Silva" }],
+          onUpload={async (payload) => {
+            const categoryMap: Record<string, string> = {
+              "Manual": "manual",
+              "Procedimento": "procedimento",
+              "Instrucao": "instrucao",
+              "Formulario": "formulario",
+              "Registro": "registro",
             };
-            setDocuments((prev) => [doc, ...prev]);
-            setSelectedDoc(nextId);
-            setShowUpload(false);
+            const tipoRaw = payload.category || suggestMetadata({ name: payload.name, type: payload.type, project: payload.project }).category;
+            const tipo = (categoryMap[tipoRaw] ?? "evidencia") as "manual" | "procedimento" | "instrucao" | "formulario" | "registro" | "evidencia";
+
+            const versao = parseInt(
+              payload.versionType === "major"
+                ? String(payload.baseVersion + 1)
+                : String(payload.baseVersion)
+            ) || 1;
+
+            const tags = [payload.clause, payload.evidence].filter(Boolean);
+
+            const result = await create({
+              titulo: payload.name,
+              tipo,
+              norma: payload.project,
+              versao,
+              status: "rascunho",
+              arquivo_nome: payload.name,
+              tamanho_bytes: parseSizeToBytes(payload.size),
+              uploaded_by: "Carlos Silva",
+              aprovado_por: "",
+              tags,
+              codigo: (payload.category || "DOC") + "-" + Date.now(),
+            });
+
+            if (result) {
+              toast.success("Documento enviado!");
+              setSelectedDoc(result.id);
+              setShowUpload(false);
+            } else {
+              toast.error("Erro ao salvar");
+            }
           }}
         />
       )}
@@ -725,7 +712,7 @@ function UploadModal({
             </div>
           )}
           <div className="col-span-2 px-3 py-2 border border-certifica-accent/20 bg-certifica-accent-light rounded-[4px] text-[11px] text-certifica-dark">
-            <div className="flex items-center gap-1.5 mb-1"><Bot className="w-3.5 h-3.5 text-certifica-accent" />Sugestão IA de metadata</div>
+            <div className="flex items-center gap-1.5 mb-1"><Bot className="w-3.5 h-3.5 text-certifica-accent" />Sugestão automática de metadata</div>
             Categoria: <strong>{suggestion.category}</strong> · Cláusula: <strong>{suggestion.clause}</strong>
           </div>
           {formError && (

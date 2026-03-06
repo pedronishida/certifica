@@ -29,6 +29,7 @@ import {
   Info,
   AlertCircle,
   CheckCircle2,
+  Menu,
 } from "lucide-react";
 import { useGlobalSearch, type SearchResult } from "../lib/useGlobalSearch";
 import { useNotifications } from "../lib/useNotifications";
@@ -147,6 +148,10 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const [expandedSections, setExpandedSections] = useState<string[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 1024 : false
+  );
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Hooks ── */
@@ -162,6 +167,9 @@ export default function AppLayout() {
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
+  /* ── Computed ── */
+  const effectivelyOpen = isMobile ? true : isOpen;
+
   /* ── Route persistence ── */
   useEffect(() => {
     localStorage.setItem(LAST_ROUTE_KEY, location.pathname);
@@ -176,6 +184,22 @@ export default function AppLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ── Mobile detection ── */
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const handler = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches);
+      if (!e.matches) setMobileOpen(false);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  /* ── Close mobile menu on route change ── */
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -183,6 +207,7 @@ export default function AppLayout() {
         setSearchFocused(false);
         setNotifOpen(false);
         setHelpOpen(false);
+        setMobileOpen(false);
         globalSearch.clear();
         searchRef.current?.blur();
         return;
@@ -228,7 +253,7 @@ export default function AppLayout() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  /* ── Sidebar hover ── */
+  /* ── Sidebar hover (desktop only) ── */
   const handleMouseEnter = useCallback(() => {
     if (closeTimer.current) {
       clearTimeout(closeTimer.current);
@@ -287,23 +312,22 @@ export default function AppLayout() {
       if (visibleChildren.length === 0) return null;
 
       const sectionOpen = activeExpanded.includes(item.label);
-      const showChildren = sectionOpen && isOpen;
+      const showChildren = sectionOpen && effectivelyOpen;
       const hasActiveChild = isChildActive(item);
       return (
         <div key={item.label} className="mb-px relative group/parent">
           <button
-            onClick={() => isOpen && toggleSection(item.label)}
-            className={`w-full flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] cursor-pointer ${
+            onClick={() => effectivelyOpen && toggleSection(item.label)}
+            className={`w-full flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] cursor-pointer transition-colors duration-150 ${
               hasActiveChild
                 ? "text-certifica-accent-dark"
                 : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
             }`}
-            style={{ transition: `background ${TRANSITION}` }}
           >
             <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
             <span
               className="text-[12.5px] flex-1 text-left"
-              style={{ ...textStyle(isOpen), fontWeight: hasActiveChild ? 500 : 400 }}
+              style={{ ...textStyle(effectivelyOpen), fontWeight: hasActiveChild ? 500 : 400 }}
             >
               {item.label}
             </span>
@@ -311,8 +335,8 @@ export default function AppLayout() {
               className={`w-3 h-3 flex-shrink-0 ${sectionOpen ? "" : "-rotate-90"}`}
               strokeWidth={1.5}
               style={{
-                opacity: isOpen ? 0.3 : 0,
-                maxWidth: isOpen ? 12 : 0,
+                opacity: effectivelyOpen ? 0.3 : 0,
+                maxWidth: effectivelyOpen ? 12 : 0,
                 transition: `opacity ${TRANSITION}, max-width ${TRANSITION}, transform 200ms ease`,
                 overflow: "hidden",
               }}
@@ -320,7 +344,7 @@ export default function AppLayout() {
             <span
               className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
               style={{
-                opacity: !isOpen && hasActiveChild ? 1 : 0,
+                opacity: !effectivelyOpen && hasActiveChild ? 1 : 0,
                 transition: `opacity ${TRANSITION}`,
               }}
             />
@@ -340,12 +364,11 @@ export default function AppLayout() {
                   <NavLink
                     key={child.path}
                     to={child.path}
-                    className={`flex items-center pl-3 py-[6px] rounded-r-[3px] whitespace-nowrap ${
+                    className={`flex items-center pl-3 py-[6px] rounded-r-[3px] whitespace-nowrap transition-colors duration-150 ${
                       isActive
                         ? "text-certifica-accent-dark bg-certifica-accent-light"
                         : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-50"
                     }`}
-                    style={{ transition: `background ${TRANSITION}, color ${TRANSITION}` }}
                   >
                     <span className="text-[12px]" style={{ fontWeight: isActive ? 500 : 400 }}>
                       {child.label}
@@ -355,7 +378,7 @@ export default function AppLayout() {
               })}
             </div>
           </div>
-          {!isOpen && (
+          {!effectivelyOpen && (
             <div
               className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/parent:opacity-100 z-50 shadow-lg"
               style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
@@ -372,29 +395,28 @@ export default function AppLayout() {
       <div key={item.path} className="relative group/item mb-px">
         <NavLink
           to={item.path!}
-          className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] ${
+          className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] transition-colors duration-150 ${
             isActive
               ? "bg-certifica-accent-light text-certifica-accent-dark"
               : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
           }`}
-          style={{ transition: `background ${TRANSITION}` }}
         >
           <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
           <span
             className="text-[12.5px]"
-            style={{ ...textStyle(isOpen), fontWeight: isActive ? 500 : 400 }}
+            style={{ ...textStyle(effectivelyOpen), fontWeight: isActive ? 500 : 400 }}
           >
             {item.label}
           </span>
           <span
             className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
             style={{
-              opacity: !isOpen && isActive ? 1 : 0,
+              opacity: !effectivelyOpen && isActive ? 1 : 0,
               transition: `opacity ${TRANSITION}`,
             }}
           />
         </NavLink>
-        {!isOpen && (
+        {!effectivelyOpen && (
           <div
             className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/item:opacity-100 z-50 shadow-lg"
             style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
@@ -410,27 +432,51 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {/* ── Mobile backdrop ── */}
+      {isMobile && mobileOpen && (
+        <div
+          className="fixed inset-0 z-30"
+          style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(2px)" }}
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
       {/* ── Sidebar ── */}
       <aside
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        className="flex-shrink-0 bg-white border-r border-certifica-200 flex flex-col overflow-hidden relative"
+        onMouseEnter={!isMobile ? handleMouseEnter : undefined}
+        onMouseLeave={!isMobile ? handleMouseLeave : undefined}
+        className="bg-white border-r border-certifica-200 flex flex-col overflow-hidden"
         style={{
-          width: isOpen ? EXPANDED_W : COLLAPSED_W,
-          transition: `width ${TRANSITION}`,
+          position: isMobile ? "fixed" : "relative",
+          top: isMobile ? 0 : undefined,
+          left: isMobile ? 0 : undefined,
+          bottom: isMobile ? 0 : undefined,
+          zIndex: isMobile ? 40 : undefined,
+          flexShrink: isMobile ? undefined : 0,
+          width: isMobile ? EXPANDED_W : (isOpen ? EXPANDED_W : COLLAPSED_W),
+          transform: isMobile ? (mobileOpen ? "translateX(0)" : "translateX(-100%)") : "none",
+          transition: isMobile ? `transform ${TRANSITION}` : `width ${TRANSITION}`,
         }}
       >
         {/* Logo area */}
-        <div className="h-[52px] flex items-center border-b border-certifica-200 overflow-hidden flex-shrink-0 px-2.5">
+        <div className="h-[52px] flex items-center border-b border-certifica-200 overflow-hidden flex-shrink-0 px-2.5 gap-2">
           <div
             className="overflow-hidden flex-shrink-0 pl-[3px]"
             style={{
-              width: isOpen ? 194 : 24,
+              width: effectivelyOpen ? 160 : 24,
               transition: `width ${TRANSITION}`,
             }}
           >
             <img src={logoImg} alt="Certifica Gestão de Sistemas" className="h-[30px] w-auto max-w-none" />
           </div>
+          {isMobile && (
+            <button
+              onClick={() => setMobileOpen(false)}
+              className="ml-auto p-1 text-certifica-500/40 hover:text-certifica-500 transition-colors flex-shrink-0"
+            >
+              <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
@@ -444,29 +490,28 @@ export default function AppLayout() {
                 <div key={item.path} className="relative group/bottom mb-px">
                   <NavLink
                     to={item.path}
-                    className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] ${
+                    className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-[4px] transition-colors duration-150 ${
                       isActive
                         ? "bg-certifica-accent-light text-certifica-accent-dark"
                         : "text-certifica-500 hover:text-certifica-dark hover:bg-certifica-100/70"
                     }`}
-                    style={{ transition: `background ${TRANSITION}` }}
                   >
                     <item.icon className="w-[15px] h-[15px] flex-shrink-0" strokeWidth={1.5} />
                     <span
                       className="text-[12.5px]"
-                      style={{ ...textStyle(isOpen), fontWeight: 400 }}
+                      style={{ ...textStyle(effectivelyOpen), fontWeight: 400 }}
                     >
                       {item.label}
                     </span>
                     <span
                       className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-certifica-accent rounded-r-full"
                       style={{
-                        opacity: !isOpen && isActive ? 1 : 0,
+                        opacity: !effectivelyOpen && isActive ? 1 : 0,
                         transition: `opacity ${TRANSITION}`,
                       }}
                     />
                   </NavLink>
-                  {!isOpen && (
+                  {!effectivelyOpen && (
                     <div
                       className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 bg-certifica-dark text-white text-[11px] rounded-[4px] whitespace-nowrap opacity-0 pointer-events-none group-hover/bottom:opacity-100 z-50 shadow-lg"
                       style={{ fontWeight: 400, transition: `opacity 150ms ease` }}
@@ -492,8 +537,8 @@ export default function AppLayout() {
             <div
               className="flex-1 min-w-0"
               style={{
-                opacity: isOpen ? 1 : 0,
-                maxWidth: isOpen ? 120 : 0,
+                opacity: effectivelyOpen ? 1 : 0,
+                maxWidth: effectivelyOpen ? 120 : 0,
                 transition: `opacity ${TRANSITION}, max-width ${TRANSITION}`,
                 overflow: "hidden",
               }}
@@ -508,10 +553,10 @@ export default function AppLayout() {
             <button
               onClick={logout}
               title="Sair"
-              className="text-certifica-500/40 hover:text-red-500 p-1 cursor-pointer flex-shrink-0"
+              className="text-certifica-500/40 hover:text-red-500 p-1 cursor-pointer flex-shrink-0 transition-colors duration-150"
               style={{
-                opacity: isOpen ? 1 : 0,
-                maxWidth: isOpen ? 28 : 0,
+                opacity: effectivelyOpen ? 1 : 0,
+                maxWidth: effectivelyOpen ? 28 : 0,
                 transition: `opacity ${TRANSITION}, max-width ${TRANSITION}`,
                 overflow: "hidden",
               }}
@@ -523,27 +568,36 @@ export default function AppLayout() {
       </aside>
 
       {/* ── Main area ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Header */}
-        <header className="h-[44px] flex-shrink-0 bg-white border-b border-certifica-200 flex items-center px-5 justify-between relative z-40">
-          <div className="flex items-center gap-1.5 text-[12px]">
-            <span className="text-certifica-accent" style={{ fontWeight: 500 }}>Certifica</span>
-            <ChevronRight className="w-3 h-3 text-certifica-500/40" strokeWidth={1.5} />
-            <span className="text-certifica-dark" style={{ fontWeight: 500 }}>
+        <header className="h-[44px] flex-shrink-0 bg-white border-b border-certifica-200 flex items-center px-4 justify-between relative z-40">
+          <div className="flex items-center gap-1.5 text-[12px] min-w-0">
+            {isMobile && (
+              <button
+                onClick={() => setMobileOpen((p) => !p)}
+                className="p-1.5 text-certifica-500/60 hover:text-certifica-dark transition-colors mr-1 flex-shrink-0"
+                aria-label="Abrir menu"
+              >
+                <Menu className="w-4 h-4" strokeWidth={1.5} />
+              </button>
+            )}
+            <span className="text-certifica-accent flex-shrink-0" style={{ fontWeight: 500 }}>Certifica</span>
+            <ChevronRight className="w-3 h-3 text-certifica-500/40 flex-shrink-0" strokeWidth={1.5} />
+            <span className="text-certifica-dark truncate" style={{ fontWeight: 500 }}>
               {getBreadcrumb(location.pathname)}
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {/* ── Global Search ── */}
             <div ref={searchContainerRef} className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-certifica-500/40 z-10" strokeWidth={1.5} />
               <input
                 ref={searchRef}
-                className={`h-7 pl-7 pr-8 bg-certifica-50 border rounded-[3px] text-[11.5px] text-certifica-dark placeholder:text-certifica-500/40 focus:outline-none focus:ring-1 focus:ring-certifica-accent/30 focus:border-certifica-accent/30 transition-all ${
-                  searchFocused ? "w-[320px] border-certifica-accent/30" : "w-[180px] border-certifica-200"
+                className={`h-7 pl-7 pr-8 bg-certifica-50 border rounded-[3px] text-[11.5px] text-certifica-dark placeholder:text-certifica-500/40 focus:outline-none focus:ring-1 focus:ring-certifica-accent/30 focus:border-certifica-accent/30 transition-all duration-200 ${
+                  searchFocused ? "w-[200px] sm:w-[280px] border-certifica-accent/30" : "w-[100px] sm:w-[160px] border-certifica-200"
                 }`}
-                placeholder="Buscar... (Ctrl+K)"
+                placeholder={isMobile ? "Buscar..." : "Buscar... (Ctrl+K)"}
                 style={{ fontWeight: 400 }}
                 value={globalSearch.query}
                 onChange={(e) => globalSearch.search(e.target.value)}
@@ -555,7 +609,7 @@ export default function AppLayout() {
                     globalSearch.clear();
                     searchRef.current?.focus();
                   }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-certifica-500/40 hover:text-certifica-500 z-10"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-certifica-500/40 hover:text-certifica-500 z-10 transition-colors"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -563,7 +617,7 @@ export default function AppLayout() {
 
               {/* Search Results Dropdown */}
               {showSearchResults && (
-                <div className="absolute top-full right-0 mt-1 w-[400px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="absolute top-full right-0 mt-1 w-[280px] sm:w-[400px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
                   {globalSearch.loading ? (
                     <div className="flex items-center justify-center gap-2 py-6 text-certifica-500/60">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -623,7 +677,7 @@ export default function AppLayout() {
 
               {/* Notifications Dropdown */}
               {notifOpen && (
-                <div className="absolute top-full right-0 mt-1 w-[380px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="absolute top-full right-0 mt-1 w-[300px] sm:w-[380px] bg-white border border-certifica-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-certifica-100">
                     <span className="text-[13px] text-certifica-dark" style={{ fontWeight: 600 }}>
                       Notificações
@@ -664,7 +718,7 @@ export default function AppLayout() {
                                 {!n.lida && (
                                   <button
                                     onClick={() => markAsRead(n.id)}
-                                    className="text-certifica-500/40 hover:text-certifica-accent flex-shrink-0 cursor-pointer"
+                                    className="text-certifica-500/40 hover:text-certifica-accent flex-shrink-0 cursor-pointer transition-colors"
                                     title="Marcar como lida"
                                   >
                                     <Check className="w-3 h-3" />
@@ -704,14 +758,14 @@ export default function AppLayout() {
               className="fixed inset-0 bg-black/20 z-40 transition-opacity"
               onClick={() => setHelpOpen(false)}
             />
-            <div className="fixed top-0 right-0 h-full w-[380px] bg-white shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="fixed top-0 right-0 h-full w-[320px] sm:w-[380px] bg-white shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
               <div className="flex items-center justify-between px-5 py-4 border-b border-certifica-200">
                 <span className="text-[14px] text-certifica-dark" style={{ fontWeight: 600 }}>
                   Central de Ajuda
                 </span>
                 <button
                   onClick={() => setHelpOpen(false)}
-                  className="p-1 text-certifica-500/40 hover:text-certifica-500 cursor-pointer"
+                  className="p-1 text-certifica-500/40 hover:text-certifica-500 cursor-pointer transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>

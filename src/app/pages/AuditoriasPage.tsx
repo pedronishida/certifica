@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 
 import { DSCard } from "../components/ds/DSCard";
 import { DSBadge } from "../components/ds/DSBadge";
@@ -14,91 +15,12 @@ import {
   Eye,
   X,
 } from "lucide-react";
+import { useAudits, fetchClientesSimple } from "../lib/useAudits";
+import type { AuditInsert } from "../lib/useAudits";
 
 type AuditStatus = "planejada" | "em-andamento" | "concluida" | "cancelada";
 type BadgeVariant = "conformidade" | "nao-conformidade" | "observacao" | "oportunidade" | "outline";
 type RaiClassification = "conformidade" | "nao-conformidade" | "observacao" | "oportunidade";
-
-interface Audit {
-  id: string;
-  client: string;
-  standard: string;
-  type: string;
-  auditor: string;
-  dateStart: string;
-  dateEnd: string;
-  status: AuditStatus;
-  findings: { c: number; nc: number; obs: number; opm: number };
-}
-
-const audits: Audit[] = [
-  {
-    id: "AUD-2026-0051",
-    client: "Metalurgica Acoforte",
-    standard: "ISO 9001:2015",
-    type: "Interna",
-    auditor: "Carlos Silva",
-    dateStart: "16/02/2026",
-    dateEnd: "18/02/2026",
-    status: "em-andamento",
-    findings: { c: 2, nc: 2, obs: 2, opm: 1 },
-  },
-  {
-    id: "AUD-2026-0052",
-    client: "Plastiform Industrial",
-    standard: "ISO 14001:2015",
-    type: "Interna",
-    auditor: "Roberto Lima",
-    dateStart: "21/02/2026",
-    dateEnd: "22/02/2026",
-    status: "planejada",
-    findings: { c: 0, nc: 0, obs: 0, opm: 0 },
-  },
-  {
-    id: "AUD-2026-0050",
-    client: "TransLog Operacoes",
-    standard: "ISO 45001:2018",
-    type: "Certificacao",
-    auditor: "Maria Santos",
-    dateStart: "28/02/2026",
-    dateEnd: "01/03/2026",
-    status: "planejada",
-    findings: { c: 0, nc: 0, obs: 0, opm: 0 },
-  },
-  {
-    id: "AUD-2026-0048",
-    client: "Grupo Energis",
-    standard: "ISO 50001:2018",
-    type: "Interna",
-    auditor: "Ana Costa",
-    dateStart: "10/02/2026",
-    dateEnd: "11/02/2026",
-    status: "concluida",
-    findings: { c: 5, nc: 1, obs: 3, opm: 2 },
-  },
-  {
-    id: "AUD-2026-0047",
-    client: "AgroVale Alimentos",
-    standard: "ISO 22000:2018",
-    type: "Interna",
-    auditor: "Pedro Souza",
-    dateStart: "05/02/2026",
-    dateEnd: "06/02/2026",
-    status: "concluida",
-    findings: { c: 7, nc: 0, obs: 1, opm: 3 },
-  },
-  {
-    id: "AUD-2026-0045",
-    client: "Madeireira Floresta Viva",
-    standard: "FSC COC",
-    type: "Recertificacao",
-    auditor: "Carlos Silva",
-    dateStart: "28/01/2026",
-    dateEnd: "29/01/2026",
-    status: "concluida",
-    findings: { c: 4, nc: 1, obs: 2, opm: 1 },
-  },
-];
 
 const statusConfig: Record<AuditStatus, { label: string; variant: BadgeVariant }> = {
   planejada: { label: "Planejada", variant: "oportunidade" },
@@ -114,79 +36,87 @@ const raiClassificationConfig: Record<RaiClassification, { label: string; varian
   oportunidade: { label: "Oportunidade de melhoria", variant: "oportunidade" },
 };
 
-/* ── NC tracking ── */
-const openNCs = [
-  { id: "NC-041", client: "Metalurgica Acoforte", clause: "7.1.6", desc: "Calibracao de paquimetro vencida", severity: "menor" as const, days: 2 },
-  { id: "NC-040", client: "Metalurgica Acoforte", clause: "6.1.2", desc: "Analise de riscos incompleta — processo critico", severity: "maior" as const, days: 2 },
-  { id: "NC-038", client: "Grupo Energis", clause: "4.4.3", desc: "Baseline energetico nao atualizado", severity: "menor" as const, days: 8 },
-  { id: "NC-035", client: "Madeireira Floresta Viva", clause: "COC 2.1", desc: "Rastreabilidade de lote com falha", severity: "maior" as const, days: 21 },
-];
-
-type Tab = "painel" | "calendario";
-
 export default function AuditoriasPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>("painel");
+  const { audits, loading, error, create } = useAudits();
+
   const [statusFilter, setStatusFilter] = useState<string>("todos");
-  const [auditList, setAuditList] = useState<Audit[]>(audits);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isRaiModalOpen, setIsRaiModalOpen] = useState(false);
   const [copiedRai, setCopiedRai] = useState(false);
+  const [clienteOptions, setClienteOptions] = useState<{ id: string; razao_social: string }[]>([]);
   const [newAudit, setNewAudit] = useState({
-    client: "",
+    cliente_id: "",
     standard: "",
-    type: "Interna",
+    type: "interna" as "interna" | "externa" | "certificacao",
     auditor: "",
     dateStart: "",
     dateEnd: "",
     status: "planejada" as AuditStatus,
   });
   const [raiDraft, setRaiDraft] = useState({
-    auditId: audits[0]?.id ?? "",
+    auditId: "",
     evidencia: "",
     requisito: "",
     classificacao: "observacao" as RaiClassification,
     recomendacao: "",
   });
 
+  useEffect(() => {
+    fetchClientesSimple().then(setClienteOptions);
+  }, []);
+
+  useEffect(() => {
+    if (audits.length > 0 && !raiDraft.auditId) {
+      const preferred = audits.find((a) => a.status === "em-andamento") ?? audits[0];
+      setRaiDraft((prev) => ({
+        ...prev,
+        auditId: preferred?.id ?? "",
+        requisito: preferred?.norma ?? "",
+      }));
+    }
+  }, [audits]);
+
   const filtered = statusFilter === "todos"
-    ? auditList
-    : auditList.filter((a) => a.status === statusFilter);
+    ? audits
+    : audits.filter((a) => a.status === statusFilter);
 
   const counts = {
-    total: auditList.length,
-    planejada: auditList.filter((a) => a.status === "planejada").length,
-    andamento: auditList.filter((a) => a.status === "em-andamento").length,
-    concluida: auditList.filter((a) => a.status === "concluida").length,
+    total: audits.length,
+    planejada: audits.filter((a) => a.status === "planejada").length,
+    andamento: audits.filter((a) => a.status === "em-andamento").length,
+    concluida: audits.filter((a) => a.status === "concluida").length,
   };
 
-  const totalFindings = auditList.reduce(
-    (acc, a) => ({
-      c: acc.c + a.findings.c,
-      nc: acc.nc + a.findings.nc,
-      obs: acc.obs + a.findings.obs,
-      opm: acc.opm + a.findings.opm,
-    }),
+  const openNCs = audits
+    .flatMap((a) => a.findings)
+    .filter((f) => (f.tipo === "nc-maior" || f.tipo === "nc-menor") && f.status === "aberta");
+
+  const totalFindings = audits.reduce(
+    (acc, a) => {
+      const f = a.findings;
+      return {
+        c: acc.c + f.filter((x) => x.tipo === "conformidade").length,
+        nc: acc.nc + f.filter((x) => x.tipo.includes("nc")).length,
+        obs: acc.obs + f.filter((x) => x.tipo === "observacao").length,
+        opm: acc.opm + f.filter((x) => x.tipo === "oportunidade").length,
+      };
+    },
     { c: 0, nc: 0, obs: 0, opm: 0 }
   );
 
   const toBrDate = (isoDate: string) => {
-    if (!isoDate.includes("-")) return isoDate;
+    if (!isoDate || !isoDate.includes("-")) return isoDate ?? "";
     const [yyyy, mm, dd] = isoDate.split("-");
     return `${dd}/${mm}/${yyyy}`;
   };
 
-  const getNextAuditId = () => {
-    const maxSequence = auditList.reduce((max, item) => {
-      const match = item.id.match(/(\d+)$/);
-      if (!match) return max;
-      const seq = Number(match[1]);
-      return Number.isNaN(seq) ? max : Math.max(max, seq);
-    }, 0);
-    return `AUD-2026-${String(maxSequence + 1).padStart(4, "0")}`;
+  const generateCodigo = () => {
+    const year = new Date().getFullYear();
+    return `AUD-${year}-${String(audits.length + 1).padStart(4, "0")}`;
   };
 
-  const selectedRaiAudit = auditList.find((a) => a.id === raiDraft.auditId) ?? null;
+  const selectedRaiAudit = audits.find((a) => a.id === raiDraft.auditId) ?? null;
 
   const getSuggestedRecommendation = (classification: RaiClassification) => {
     switch (classification) {
@@ -197,7 +127,7 @@ export default function AuditoriasPage() {
       case "observacao":
         return "Registrar observacao e acompanhar no proximo ciclo para evitar evolucao para NC.";
       case "oportunidade":
-        return "Avaliar melhoria de processo e incluir acao de otimização no plano de auditoria.";
+        return "Avaliar melhoria de processo e incluir acao de otimizacao no plano de auditoria.";
       default:
         return "";
     }
@@ -206,16 +136,17 @@ export default function AuditoriasPage() {
   const buildRaiText = () => {
     if (!selectedRaiAudit) return "";
     const classificacaoLabel = raiClassificationConfig[raiDraft.classificacao].label;
-    const descricao = `Durante a auditoria ${selectedRaiAudit.type.toLowerCase()} em ${selectedRaiAudit.client}, referente a ${selectedRaiAudit.standard}, foi analisado o requisito "${raiDraft.requisito || selectedRaiAudit.standard}".`;
+    const clienteNome = selectedRaiAudit.cliente_nome ?? selectedRaiAudit.escopo ?? "";
+    const descricao = `Durante a auditoria ${selectedRaiAudit.tipo} em ${clienteNome}, referente a ${selectedRaiAudit.norma}, foi analisado o requisito "${raiDraft.requisito || selectedRaiAudit.norma}".`;
     const evidencia = raiDraft.evidencia || "Evidencia ainda nao informada.";
     const recomendacao = raiDraft.recomendacao || getSuggestedRecommendation(raiDraft.classificacao);
 
     return [
-      `RAI - ${selectedRaiAudit.id}`,
-      `Cliente: ${selectedRaiAudit.client}`,
-      `Norma: ${selectedRaiAudit.standard}`,
+      `RAI - ${selectedRaiAudit.codigo}`,
+      `Cliente: ${clienteNome}`,
+      `Norma: ${selectedRaiAudit.norma}`,
       `Auditor: ${selectedRaiAudit.auditor}`,
-      `Periodo: ${selectedRaiAudit.dateStart} a ${selectedRaiAudit.dateEnd}`,
+      `Periodo: ${toBrDate(selectedRaiAudit.data_inicio ?? "")} a ${toBrDate(selectedRaiAudit.data_fim ?? "")}`,
       "",
       "1. Descricao",
       descricao,
@@ -224,7 +155,7 @@ export default function AuditoriasPage() {
       evidencia,
       "",
       "3. Requisito tecnico",
-      raiDraft.requisito || selectedRaiAudit.standard,
+      raiDraft.requisito || selectedRaiAudit.norma,
       "",
       "4. Classificacao",
       classificacaoLabel,
@@ -246,41 +177,52 @@ export default function AuditoriasPage() {
     }
   };
 
-  const handleCreateAudit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCreateAudit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    const createdAudit: Audit = {
-      id: getNextAuditId(),
-      client: newAudit.client.trim(),
-      standard: newAudit.standard.trim(),
-      type: newAudit.type,
+    const selectedCliente = clienteOptions.find((c) => c.id === newAudit.cliente_id);
+    const clienteNome = selectedCliente?.razao_social ?? "";
+
+    const payload: AuditInsert = {
+      codigo: generateCodigo(),
+      tipo: newAudit.type,
+      cliente_id: newAudit.cliente_id,
       auditor: newAudit.auditor.trim(),
-      dateStart: toBrDate(newAudit.dateStart),
-      dateEnd: toBrDate(newAudit.dateEnd),
+      data_inicio: newAudit.dateStart || undefined,
+      data_fim: newAudit.dateEnd || undefined,
       status: newAudit.status,
-      findings: { c: 0, nc: 0, obs: 0, opm: 0 },
+      escopo: clienteNome,
+      norma: newAudit.standard.trim(),
+      observacoes: "",
     };
 
-    setAuditList((prev) => [createdAudit, ...prev]);
+    const result = await create(payload);
+    if (!result) {
+      toast.error("Erro ao criar auditoria.");
+      return;
+    }
+
     setIsCreateModalOpen(false);
     setNewAudit({
-      client: "",
+      cliente_id: "",
       standard: "",
-      type: "Interna",
+      type: "interna",
       auditor: "",
       dateStart: "",
       dateEnd: "",
       status: "planejada",
     });
     setStatusFilter("todos");
+    toast.success("Auditoria criada com sucesso.");
   };
 
   const openRaiEditor = () => {
     if (!selectedRaiAudit) return;
+    const clienteNome = selectedRaiAudit.cliente_nome ?? selectedRaiAudit.escopo ?? "";
     const payload = {
       auditId: selectedRaiAudit.id,
-      client: selectedRaiAudit.client,
-      standard: selectedRaiAudit.standard,
+      client: clienteNome,
+      standard: selectedRaiAudit.norma,
       auditor: selectedRaiAudit.auditor,
       classificacao: raiDraft.classificacao,
       requisito: raiDraft.requisito,
@@ -296,7 +238,12 @@ export default function AuditoriasPage() {
 
   return (
     <div className="p-5 space-y-4">
-      {/* Header */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-[4px] px-3 py-2 text-[12px]">
+          {error}
+        </div>
+      )}
+
       <div className="flex items-end justify-between">
         <div>
           <h2 className="text-certifica-900">Auditorias</h2>
@@ -310,11 +257,11 @@ export default function AuditoriasPage() {
             size="sm"
             icon={<FileText className="w-3.5 h-3.5" strokeWidth={1.5} />}
             onClick={() => {
-              const preferredAudit = auditList.find((a) => a.status === "em-andamento") ?? auditList[0];
+              const preferredAudit = audits.find((a) => a.status === "em-andamento") ?? audits[0];
               setRaiDraft({
                 auditId: preferredAudit?.id ?? "",
                 evidencia: "",
-                requisito: preferredAudit?.standard ?? "",
+                requisito: preferredAudit?.norma ?? "",
                 classificacao: "observacao",
                 recomendacao: "",
               });
@@ -334,7 +281,6 @@ export default function AuditoriasPage() {
         </div>
       </div>
 
-      {/* Summary counters */}
       <div className="flex items-center gap-6">
         {[
           { label: "Nao conformidades abertas", value: String(openNCs.length), color: "text-nao-conformidade" },
@@ -349,229 +295,251 @@ export default function AuditoriasPage() {
         ))}
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-[1fr_320px] gap-4">
-        {/* Left — audit list */}
-        <div className="space-y-4">
-          {/* Filter bar */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-0 border border-certifica-200 rounded-[3px] overflow-hidden">
-              {[
-                { key: "todos", label: "Todas" },
-                { key: "planejada", label: "Planejadas" },
-                { key: "em-andamento", label: "Em andamento" },
-                { key: "concluida", label: "Concluidas" },
-              ].map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setStatusFilter(f.key)}
-                  className={`px-3 py-1.5 text-[11px] cursor-pointer transition-colors border-r border-certifica-200 last:border-r-0 ${
-                    statusFilter === f.key
-                      ? "bg-certifica-900 text-white"
-                      : "bg-white text-certifica-500 hover:bg-certifica-50"
-                  }`}
-                  style={{ fontWeight: statusFilter === f.key ? 500 : 400 }}
-                >
-                  {f.label}
-                </button>
-              ))}
+      {loading ? (
+        <div className="flex items-center justify-center py-16 text-[13px] text-certifica-500">
+          Carregando...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-0 border border-certifica-200 rounded-[3px] overflow-hidden">
+                {[
+                  { key: "todos", label: "Todas" },
+                  { key: "planejada", label: "Planejadas" },
+                  { key: "em-andamento", label: "Em andamento" },
+                  { key: "concluida", label: "Concluidas" },
+                ].map((f) => (
+                  <button
+                    key={f.key}
+                    onClick={() => setStatusFilter(f.key)}
+                    className={`px-3 py-1.5 text-[11px] cursor-pointer transition-colors border-r border-certifica-200 last:border-r-0 ${
+                      statusFilter === f.key
+                        ? "bg-certifica-900 text-white"
+                        : "bg-white text-certifica-500 hover:bg-certifica-50"
+                    }`}
+                    style={{ fontWeight: statusFilter === f.key ? 500 : 400 }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {filtered.map((audit) => {
+                const sc = statusConfig[audit.status as AuditStatus] ?? statusConfig.planejada;
+                const f = audit.findings;
+                const fc = {
+                  c: f.filter((x) => x.tipo === "conformidade").length,
+                  nc: f.filter((x) => x.tipo.includes("nc")).length,
+                  obs: f.filter((x) => x.tipo === "observacao").length,
+                  opm: f.filter((x) => x.tipo === "oportunidade").length,
+                };
+                const hasFindings = fc.c + fc.nc + fc.obs + fc.opm > 0;
+                const clienteNome = audit.cliente_nome ?? audit.escopo ?? "";
+                const mappedClassification: RaiClassification =
+                  fc.nc > 0
+                    ? "nao-conformidade"
+                    : fc.obs > 0
+                      ? "observacao"
+                      : fc.opm > 0
+                        ? "oportunidade"
+                        : "conformidade";
+                return (
+                  <div key={audit.id} className="bg-white border border-certifica-200 rounded-[4px] px-4 py-3 hover:bg-certifica-50/30 transition-colors cursor-pointer">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[12px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>{audit.codigo}</span>
+                          <DSBadge variant={sc.variant} className="text-[9px] px-1.5 py-0">{sc.label}</DSBadge>
+                          {audit.tipo !== "interna" && (
+                            <span className="text-[9px] bg-certifica-900/8 text-certifica-900 rounded-[2px] px-1.5 py-px" style={{ fontWeight: 500 }}>
+                              {audit.tipo}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[13px] text-certifica-dark" style={{ fontWeight: 500 }}>
+                          {clienteNome}
+                        </div>
+                      </div>
+                      <button className="p-1 text-certifica-500/30 hover:text-certifica-700 transition-colors cursor-pointer">
+                        <Eye className="w-[14px] h-[14px]" strokeWidth={1.5} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-[11px] text-certifica-500" style={{ fontWeight: 400 }}>
+                      <span className="font-mono">{audit.norma}</span>
+                      <span>&middot;</span>
+                      <span>{toBrDate(audit.data_inicio ?? "")} — {toBrDate(audit.data_fim ?? "")}</span>
+                      <span>&middot;</span>
+                      <span>{audit.auditor}</span>
+                    </div>
+
+                    {hasFindings && (
+                      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-certifica-200/60">
+                        <div className="flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-conformidade" strokeWidth={1.5} />
+                          <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{fc.c}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <XCircle className="w-3 h-3 text-nao-conformidade" strokeWidth={1.5} />
+                          <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{fc.nc}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 text-observacao" strokeWidth={1.5} />
+                          <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{fc.obs}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-oportunidade" strokeWidth={1.5} />
+                          <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{fc.opm}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-2 flex justify-end">
+                      <DSButton
+                        variant="outline"
+                        size="sm"
+                        icon={<FileText className="w-3 h-3" strokeWidth={1.5} />}
+                        onClick={() => {
+                          const payload = {
+                            auditId: audit.id,
+                            client: clienteNome,
+                            standard: audit.norma,
+                            auditor: audit.auditor,
+                            classificacao: mappedClassification,
+                            requisito: audit.norma,
+                            evidencia: "",
+                            recomendacao: getSuggestedRecommendation(mappedClassification),
+                            source: "auditorias-card",
+                            createdAt: new Date().toISOString(),
+                          };
+                          localStorage.setItem("certifica:rai-context", JSON.stringify(payload));
+                          navigate(`/auditorias/rai?auditId=${encodeURIComponent(audit.id)}`);
+                        }}
+                      >
+                        Abrir RAI
+                      </DSButton>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* Audit cards */}
-          <div className="space-y-2">
-            {filtered.map((audit) => {
-              const sc = statusConfig[audit.status];
-              const hasFindings = audit.findings.c + audit.findings.nc + audit.findings.obs + audit.findings.opm > 0;
-              return (
-                <div key={audit.id} className="bg-white border border-certifica-200 rounded-[4px] px-4 py-3 hover:bg-certifica-50/30 transition-colors cursor-pointer">
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[12px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>{audit.id}</span>
-                        <DSBadge variant={sc.variant} className="text-[9px] px-1.5 py-0">{sc.label}</DSBadge>
-                        {audit.type !== "Interna" && (
-                          <span className="text-[9px] bg-certifica-900/8 text-certifica-900 rounded-[2px] px-1.5 py-px" style={{ fontWeight: 500 }}>
-                            {audit.type}
+          <div className="space-y-4">
+            <DSCard
+              header={
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>NCs abertas</span>
+                    <span className="text-[10px] bg-nao-conformidade/10 text-nao-conformidade rounded-[2px] px-1.5 py-px" style={{ fontWeight: 600 }}>
+                      {openNCs.length}
+                    </span>
+                  </div>
+                </div>
+              }
+            >
+              <div className="space-y-0">
+                {openNCs.map((nc, idx) => {
+                  const prazoDate = nc.prazo ? new Date(nc.prazo) : null;
+                  const days = prazoDate
+                    ? Math.ceil((prazoDate.getTime() - Date.now()) / 86400000)
+                    : null;
+                  const auditForNc = audits.find((a) => a.id === nc.audit_id);
+                  const clienteNc = auditForNc?.cliente_nome ?? auditForNc?.escopo ?? "";
+                  const severity = nc.tipo === "nc-maior" ? "maior" : "menor";
+                  return (
+                    <div key={nc.id} className={`py-2.5 ${idx > 0 ? "border-t border-certifica-200" : ""}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>{nc.clausula}</span>
+                          <span className={`text-[9px] rounded-[2px] px-1 py-px ${
+                            severity === "maior"
+                              ? "bg-nao-conformidade/10 text-nao-conformidade"
+                              : "bg-observacao/10 text-observacao"
+                          }`} style={{ fontWeight: 600 }}>
+                            {severity === "maior" ? "MAIOR" : "MENOR"}
+                          </span>
+                        </div>
+                        {days !== null && (
+                          <span className="text-[10px] text-certifica-500/60" style={{ fontWeight: 400 }}>
+                            {days}d
                           </span>
                         )}
                       </div>
-                      <div className="text-[13px] text-certifica-dark" style={{ fontWeight: 500 }}>
-                        {audit.client}
+                      <p className="text-[12px] text-certifica-dark mb-0.5" style={{ fontWeight: 400, lineHeight: "1.4" }}>
+                        {nc.descricao}
+                      </p>
+                      <div className="text-[10.5px] text-certifica-500" style={{ fontWeight: 400 }}>
+                        {clienteNc} &middot; {nc.clausula}
                       </div>
-                    </div>
-                    <button className="p-1 text-certifica-500/30 hover:text-certifica-700 transition-colors cursor-pointer">
-                      <Eye className="w-[14px] h-[14px]" strokeWidth={1.5} />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-[11px] text-certifica-500" style={{ fontWeight: 400 }}>
-                    <span className="font-mono">{audit.standard}</span>
-                    <span>&middot;</span>
-                    <span>{audit.dateStart} — {audit.dateEnd}</span>
-                    <span>&middot;</span>
-                    <span>{audit.auditor}</span>
-                  </div>
-
-                  {hasFindings && (
-                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-certifica-200/60">
-                      <div className="flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3 text-conformidade" strokeWidth={1.5} />
-                        <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{audit.findings.c}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <XCircle className="w-3 h-3 text-nao-conformidade" strokeWidth={1.5} />
-                        <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{audit.findings.nc}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3 text-observacao" strokeWidth={1.5} />
-                        <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{audit.findings.obs}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3 text-oportunidade" strokeWidth={1.5} />
-                        <span className="text-[10.5px] text-certifica-dark" style={{ fontWeight: 500 }}>{audit.findings.opm}</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="mt-2 flex justify-end">
-                    <DSButton
-                      variant="outline"
-                      size="sm"
-                      icon={<FileText className="w-3 h-3" strokeWidth={1.5} />}
-                      onClick={() => {
-                        const mappedClassification: RaiClassification =
-                          audit.findings.nc > 0
-                            ? "nao-conformidade"
-                            : audit.findings.obs > 0
-                              ? "observacao"
-                              : audit.findings.opm > 0
-                                ? "oportunidade"
-                                : "conformidade";
-                        const payload = {
-                          auditId: audit.id,
-                          client: audit.client,
-                          standard: audit.standard,
-                          auditor: audit.auditor,
-                          classificacao: mappedClassification,
-                          requisito: audit.standard,
-                          evidencia: "",
-                          recomendacao: getSuggestedRecommendation(mappedClassification),
-                          source: "auditorias-card",
-                          createdAt: new Date().toISOString(),
-                        };
-                        localStorage.setItem("certifica:rai-context", JSON.stringify(payload));
-                        navigate(`/auditorias/rai?auditId=${encodeURIComponent(audit.id)}`);
-                      }}
-                    >
-                      Abrir RAI
-                    </DSButton>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Right — NCs + Alerts */}
-        <div className="space-y-4">
-          {/* Open NCs */}
-          <DSCard
-            header={
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>NCs abertas</span>
-                  <span className="text-[10px] bg-nao-conformidade/10 text-nao-conformidade rounded-[2px] px-1.5 py-px" style={{ fontWeight: 600 }}>
-                    {openNCs.length}
-                  </span>
-                </div>
-              </div>
-            }
-          >
-            <div className="space-y-0">
-              {openNCs.map((nc, idx) => (
-                <div key={nc.id} className={`py-2.5 ${idx > 0 ? "border-t border-certifica-200" : ""}`}>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>{nc.id}</span>
-                      <span className={`text-[9px] rounded-[2px] px-1 py-px ${
-                        nc.severity === "maior"
-                          ? "bg-nao-conformidade/10 text-nao-conformidade"
-                          : "bg-observacao/10 text-observacao"
-                      }`} style={{ fontWeight: 600 }}>
-                        {nc.severity === "maior" ? "MAIOR" : "MENOR"}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-certifica-500/60" style={{ fontWeight: 400 }}>
-                      {nc.days}d
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-certifica-dark mb-0.5" style={{ fontWeight: 400, lineHeight: "1.4" }}>
-                    {nc.desc}
-                  </p>
-                  <div className="text-[10.5px] text-certifica-500" style={{ fontWeight: 400 }}>
-                    {nc.client} &middot; {nc.clause}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </DSCard>
-
-          {/* Upcoming audits timeline */}
-          <DSCard
-            header={
-              <span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Proximas auditorias</span>
-            }
-          >
-            <div className="space-y-0">
-              {auditList
-                .filter((a) => a.status === "planejada" || a.status === "em-andamento")
-                .map((a, idx) => {
-                  const sc = statusConfig[a.status];
-                  return (
-                    <div key={a.id} className={`flex gap-3 py-2.5 ${idx > 0 ? "border-t border-certifica-200" : ""}`}>
-                      <div className="w-[50px] flex-shrink-0">
-                        <div className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 500 }}>
-                          {a.dateStart.substring(0, 5)}
-                        </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] text-certifica-dark mb-0.5" style={{ fontWeight: 500 }}>
-                          {a.client}
-                        </div>
-                        <div className="text-[10.5px] text-certifica-500" style={{ fontWeight: 400 }}>
-                          {a.standard} &middot; {a.type} &middot; {a.auditor}
-                        </div>
-                      </div>
-                      <DSBadge variant={sc.variant} className="text-[8px] px-1.5 py-0 flex-shrink-0">
-                        {sc.label}
-                      </DSBadge>
                     </div>
                   );
                 })}
-            </div>
-          </DSCard>
+                {openNCs.length === 0 && (
+                  <p className="text-[12px] text-certifica-500 py-2">Nenhuma NC aberta.</p>
+                )}
+              </div>
+            </DSCard>
 
-          {/* Quick stats */}
-          <div className="bg-white border border-certifica-200 rounded-[4px] px-4 py-3">
-            <div className="text-[10px] tracking-[0.06em] uppercase text-certifica-500 mb-2" style={{ fontWeight: 600 }}>
-              Resumo do ciclo
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: "Auditorias realizadas", value: String(counts.concluida) },
-                { label: "Taxa de conformidade", value: "78%" },
-                { label: "Tempo medio (dias)", value: "1.8" },
-                { label: "NCs encerradas / total", value: "12/16" },
-              ].map((s) => (
-                <div key={s.label}>
-                  <div className="text-[15px] text-certifica-900" style={{ fontWeight: 600, lineHeight: "1.3" }}>{s.value}</div>
-                  <div className="text-[10px] text-certifica-500" style={{ fontWeight: 400 }}>{s.label}</div>
-                </div>
-              ))}
+            <DSCard
+              header={
+                <span className="text-[13px] text-certifica-900" style={{ fontWeight: 600 }}>Proximas auditorias</span>
+              }
+            >
+              <div className="space-y-0">
+                {audits
+                  .filter((a) => a.status === "planejada" || a.status === "em-andamento")
+                  .map((a, idx) => {
+                    const sc = statusConfig[a.status as AuditStatus] ?? statusConfig.planejada;
+                    const dateDisplay = toBrDate(a.data_inicio ?? "");
+                    const clienteNome = a.cliente_nome ?? a.escopo ?? "";
+                    return (
+                      <div key={a.id} className={`flex gap-3 py-2.5 ${idx > 0 ? "border-t border-certifica-200" : ""}`}>
+                        <div className="w-[50px] flex-shrink-0">
+                          <div className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 500 }}>
+                            {dateDisplay.substring(0, 5)}
+                          </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] text-certifica-dark mb-0.5" style={{ fontWeight: 500 }}>
+                            {clienteNome}
+                          </div>
+                          <div className="text-[10.5px] text-certifica-500" style={{ fontWeight: 400 }}>
+                            {a.norma} &middot; {a.tipo} &middot; {a.auditor}
+                          </div>
+                        </div>
+                        <DSBadge variant={sc.variant} className="text-[8px] px-1.5 py-0 flex-shrink-0">
+                          {sc.label}
+                        </DSBadge>
+                      </div>
+                    );
+                  })}
+              </div>
+            </DSCard>
+
+            <div className="bg-white border border-certifica-200 rounded-[4px] px-4 py-3">
+              <div className="text-[10px] tracking-[0.06em] uppercase text-certifica-500 mb-2" style={{ fontWeight: 600 }}>
+                Resumo do ciclo
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Auditorias realizadas", value: String(counts.concluida) },
+                  { label: "Taxa de conformidade", value: "78%" },
+                  { label: "Tempo medio (dias)", value: "1.8" },
+                  { label: "NCs encerradas / total", value: "12/16" },
+                ].map((s) => (
+                  <div key={s.label}>
+                    <div className="text-[15px] text-certifica-900" style={{ fontWeight: 600, lineHeight: "1.3" }}>{s.value}</div>
+                    <div className="text-[10px] text-certifica-500" style={{ fontWeight: 400 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -600,13 +568,17 @@ export default function AuditoriasPage() {
             <form onSubmit={handleCreateAudit} className="p-4 grid grid-cols-2 gap-3">
               <label className="col-span-2 text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
                 Cliente
-                <input
+                <select
                   required
-                  value={newAudit.client}
-                  onChange={(e) => setNewAudit((prev) => ({ ...prev, client: e.target.value }))}
+                  value={newAudit.cliente_id}
+                  onChange={(e) => setNewAudit((prev) => ({ ...prev, cliente_id: e.target.value }))}
                   className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
-                  placeholder="Ex.: Metalurgica Acoforte"
-                />
+                >
+                  <option value="">Selecione um cliente</option>
+                  {clienteOptions.map((c) => (
+                    <option key={c.id} value={c.id}>{c.razao_social}</option>
+                  ))}
+                </select>
               </label>
 
               <label className="col-span-2 text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
@@ -624,12 +596,12 @@ export default function AuditoriasPage() {
                 Tipo
                 <select
                   value={newAudit.type}
-                  onChange={(e) => setNewAudit((prev) => ({ ...prev, type: e.target.value }))}
+                  onChange={(e) => setNewAudit((prev) => ({ ...prev, type: e.target.value as "interna" | "externa" | "certificacao" }))}
                   className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
                 >
-                  <option>Interna</option>
-                  <option>Certificacao</option>
-                  <option>Recertificacao</option>
+                  <option value="interna">Interna</option>
+                  <option value="externa">Externa</option>
+                  <option value="certificacao">Certificacao</option>
                 </select>
               </label>
 
@@ -650,7 +622,6 @@ export default function AuditoriasPage() {
               <label className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
                 Inicio
                 <input
-                  required
                   type="date"
                   value={newAudit.dateStart}
                   onChange={(e) => setNewAudit((prev) => ({ ...prev, dateStart: e.target.value }))}
@@ -661,7 +632,6 @@ export default function AuditoriasPage() {
               <label className="text-[11px] text-certifica-500" style={{ fontWeight: 500 }}>
                 Fim
                 <input
-                  required
                   type="date"
                   value={newAudit.dateEnd}
                   onChange={(e) => setNewAudit((prev) => ({ ...prev, dateEnd: e.target.value }))}
@@ -729,18 +699,18 @@ export default function AuditoriasPage() {
                   <select
                     value={raiDraft.auditId}
                     onChange={(e) => {
-                      const selected = auditList.find((a) => a.id === e.target.value);
+                      const selected = audits.find((a) => a.id === e.target.value);
                       setRaiDraft((prev) => ({
                         ...prev,
                         auditId: e.target.value,
-                        requisito: selected?.standard ?? prev.requisito,
+                        requisito: selected?.norma ?? prev.requisito,
                       }));
                     }}
                     className="mt-1 w-full h-9 px-3 border border-certifica-200 rounded-[4px] bg-white text-[12px] text-certifica-dark focus:outline-none focus:ring-1 focus:ring-certifica-accent/30"
                   >
-                    {auditList.map((audit) => (
+                    {audits.map((audit) => (
                       <option key={audit.id} value={audit.id}>
-                        {audit.id} - {audit.client}
+                        {audit.codigo} - {audit.cliente_nome ?? audit.escopo ?? ""}
                       </option>
                     ))}
                   </select>
@@ -819,7 +789,7 @@ export default function AuditoriasPage() {
                     <div>
                       <span style={{ fontWeight: 600 }}>Descricao: </span>
                       {selectedRaiAudit
-                        ? `Durante a auditoria ${selectedRaiAudit.type.toLowerCase()} em ${selectedRaiAudit.client}, referente a ${selectedRaiAudit.standard}, foi analisado o requisito "${raiDraft.requisito || selectedRaiAudit.standard}".`
+                        ? `Durante a auditoria ${selectedRaiAudit.tipo} em ${selectedRaiAudit.cliente_nome ?? selectedRaiAudit.escopo ?? ""}, referente a ${selectedRaiAudit.norma}, foi analisado o requisito "${raiDraft.requisito || selectedRaiAudit.norma}".`
                         : "Selecione uma auditoria para iniciar."}
                     </div>
                     <div>
@@ -828,7 +798,7 @@ export default function AuditoriasPage() {
                     </div>
                     <div>
                       <span style={{ fontWeight: 600 }}>Requisito tecnico: </span>
-                      {raiDraft.requisito || (selectedRaiAudit?.standard ?? "Nao informado.")}
+                      {raiDraft.requisito || (selectedRaiAudit?.norma ?? "Nao informado.")}
                     </div>
                     <div>
                       <span style={{ fontWeight: 600 }}>Classificacao: </span>

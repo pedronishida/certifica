@@ -22,6 +22,7 @@ import { useDashboard, type DashboardFilters, type DashboardProject } from "../l
 import { useProjetos } from "../lib/useProjetos";
 import { useClientes } from "../lib/useClientes";
 import { APIFallback } from "../components/ErrorBoundary";
+import { generateDashboardInsights } from "../lib/openai";
 
 type StatusVariant = "conformidade" | "nao-conformidade" | "observacao" | "oportunidade" | "outline";
 type LayerMode = "operacional" | "executiva";
@@ -107,6 +108,8 @@ export default function DashboardPage() {
   const [detailProject, setDetailProject] = React.useState<DashboardProject | null>(null);
   const [showNewProject, setShowNewProject] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [aiInsights, setAiInsights] = React.useState<{ recomendacao: string; alertas: string[] } | null>(null);
+  const [loadingInsights, setLoadingInsights] = React.useState(false);
 
   /* ── Filters ── */
   const [filters, setFilters] = React.useState<DashboardFilters>({
@@ -204,24 +207,34 @@ export default function DashboardPage() {
 
   const drillTitle = kpiList.find((k) => k.key === selectedKpi)?.label ?? "";
 
-  /* ── AI Recommendations (based on real data) ── */
+  /* ── AI Recommendations (GPT-powered) ── */
   const aiRecommendations = React.useMemo(() => {
+    if (aiInsights) return [aiInsights.recomendacao];
     const recs: string[] = [];
     const highrisk = dashboard.projects.filter((p) => riskScore(p) >= 70);
-    if (highrisk.length > 0) {
-      recs.push(`Priorizar ${highrisk[0].cliente_nome}: risco alto + prazo crítico.`);
-    }
-    if (dashboard.kpis.docs > 3) {
-      recs.push(`Concentrar força em documentação: ${dashboard.kpis.docs} docs pendentes na carteira.`);
-    }
-    if (dashboard.kpis.ncs > 0) {
-      recs.push(`Tratar ${dashboard.kpis.ncs} NCs abertas para manter taxa de conformidade em ${dashboard.kpis.conformidade}%.`);
-    }
-    if (recs.length === 0) {
-      recs.push("Carteira saudável. Nenhuma ação prioritária identificada no momento.");
-    }
+    if (highrisk.length > 0) recs.push(`Priorizar ${highrisk[0].cliente_nome}: risco alto + prazo crítico.`);
+    if (dashboard.kpis.docs > 3) recs.push(`Concentrar força em documentação: ${dashboard.kpis.docs} docs pendentes na carteira.`);
+    if (dashboard.kpis.ncs > 0) recs.push(`Tratar ${dashboard.kpis.ncs} NCs abertas para manter taxa de conformidade em ${dashboard.kpis.conformidade}%.`);
+    if (recs.length === 0) recs.push("Carteira saudável. Nenhuma ação prioritária identificada no momento.");
     return recs;
-  }, [dashboard.projects, dashboard.kpis]);
+  }, [dashboard.projects, dashboard.kpis, aiInsights]);
+
+  React.useEffect(() => {
+    if (dashboard.loading || dashboard.projects.length === 0) return;
+    let cancelled = false;
+    setLoadingInsights(true);
+    generateDashboardInsights({
+      totalProjetos: dashboard.kpis.ativos + dashboard.projects.length,
+      projetosAtivos: dashboard.kpis.ativos,
+      totalAuditorias: dashboard.kpis.auditorias,
+      ncsAbertas: dashboard.kpis.ncs,
+      taxaConformidade: dashboard.kpis.conformidade,
+      clientes: dashboard.projects.reduce((s, p) => { s.add(p.cliente_nome); return s; }, new Set<string>()).size,
+    }).then((insights) => {
+      if (!cancelled) setAiInsights(insights);
+    }).catch(() => {}).finally(() => { if (!cancelled) setLoadingInsights(false); });
+    return () => { cancelled = true; };
+  }, [dashboard.loading, dashboard.kpis]);
 
   /* ── Alerts ── */
   const alerts = React.useMemo(() => {
@@ -367,19 +380,32 @@ export default function DashboardPage() {
       <DSCard>
         <div className="flex items-center gap-2 mb-2">
           <Brain className="w-4 h-4 text-certifica-accent" strokeWidth={1.5} />
-          <span className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>Recomendações IA (prioridade do dia)</span>
+          <span className="text-[12px] text-certifica-900" style={{ fontWeight: 600 }}>Recomendações (prioridade do dia)</span>
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {aiRecommendations.map((rec, i) => (
-            <div key={i} className="text-[11px] text-certifica-dark bg-certifica-50 border border-certifica-200 rounded-[4px] px-2.5 py-2">
-              {rec}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {loadingInsights ? (
+            <div className="col-span-3 text-[11px] text-certifica-500 italic flex items-center gap-1.5">
+              <Brain className="w-3 h-3 animate-pulse" /> Analisando dados…
             </div>
-          ))}
+          ) : (
+            aiRecommendations.map((rec, i) => (
+              <div key={i} className="text-[11px] text-certifica-dark bg-certifica-50 border border-certifica-200 rounded-[4px] px-2.5 py-2">
+                {rec}
+              </div>
+            ))
+          )}
         </div>
+        {aiInsights && aiInsights.alertas.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {aiInsights.alertas.map((a, i) => (
+              <span key={i} className="text-[10px] bg-amber-50 border border-amber-200 text-amber-800 rounded-full px-2 py-0.5">{a}</span>
+            ))}
+          </div>
+        )}
       </DSCard>
 
       {/* KPIs */}
-      <div className="grid grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {kpiList.map((kpi) => {
           const value = dashboard.kpis[kpi.key];
           const compare = dashboard.monthCompare[kpi.key];
@@ -407,7 +433,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Content */}
-      <div className="grid grid-cols-[1fr_300px] gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
         <div key={`left-${layerMode}`} className="space-y-4 min-w-0 certifica-fade-in">
           {layerMode === "operacional" ? (
             <>

@@ -316,9 +316,9 @@ export default function ProjetosPage() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
       {/* ── Main list ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-[380px] lg:min-h-0">
         {/* Header */}
         <div className="px-5 pt-5 pb-0">
           <div className="flex items-center justify-between mb-4">
@@ -525,7 +525,7 @@ export default function ProjetosPage() {
          Detail panel
          ══════════════════════════════════════════════════════════ */}
       {selected && (
-        <div className="w-[320px] flex-shrink-0 border-l border-certifica-200 bg-white flex flex-col overflow-hidden">
+        <div className="w-full lg:w-[320px] lg:flex-shrink-0 border-t lg:border-t-0 lg:border-l border-certifica-200 bg-white flex flex-col overflow-hidden">
           {/* Header */}
           <div className="px-4 py-3 border-b border-certifica-200 flex-shrink-0">
             <div className="flex items-center justify-between mb-1.5">

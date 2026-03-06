@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router";
+import { toast } from "sonner";
 
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
@@ -8,6 +9,7 @@ import { DSSelect } from "../components/ds/DSSelect";
 import { DSTextarea } from "../components/ds/DSTextarea";
 import {
   AlertTriangle,
+  Bot,
   Building2,
   CheckCircle2,
   ChevronRight,
@@ -15,6 +17,7 @@ import {
   Download,
   History,
   Lightbulb,
+  Loader2,
   Printer,
   Save,
   Search,
@@ -22,6 +25,9 @@ import {
   User,
   XCircle,
 } from "lucide-react";
+import { useAudits } from "../lib/useAudits";
+import { supabase } from "../lib/supabase";
+import { generateRAI } from "../lib/openai";
 
 type EvidenceStatus = "conforme" | "nao-conformidade" | "observacao" | "oportunidade" | "pendente";
 type Severity = "baixa" | "media" | "alta" | "critica";
@@ -232,20 +238,62 @@ function mapIncomingClassification(value?: string): EvidenceStatus | null {
   return null;
 }
 
+function mapFindingTipoToStatus(tipo: string): EvidenceStatus {
+  if (tipo === "nc-maior" || tipo === "nc-menor") return "nao-conformidade";
+  if (tipo === "conformidade") return "conforme";
+  if (tipo === "observacao") return "observacao";
+  if (tipo === "oportunidade") return "oportunidade";
+  return "pendente";
+}
+
 export default function AuditReportPage() {
   const [searchParams] = useSearchParams();
   const auditIdFromUrl = searchParams.get("auditId") ?? "";
+  const { audits, addFinding, updateRai, createRai } = useAudits();
+  const [generatingRai, setGeneratingRai] = useState(false);
+
+  // Find the matching audit from real data when auditId is present
+  const matchedAudit = useMemo(() => {
+    if (!auditIdFromUrl) return null;
+    return audits.find((a) => a.id === auditIdFromUrl) ?? null;
+  }, [audits, auditIdFromUrl]);
+
+  // Build the live evidence list from real findings, falling back to hardcoded
+  const liveEvidenceList: Evidence[] = useMemo(() => {
+    if (!matchedAudit || matchedAudit.findings.length === 0) return evidenceList;
+    const normCode = mapStandardToNormCode(matchedAudit.norma);
+    return matchedAudit.findings.map((f) => ({
+      id: f.id,
+      titulo: f.descricao,
+      processo: f.clausula,
+      status: mapFindingTipoToStatus(f.tipo),
+      initialNorm: normCode,
+      initialClause: f.clausula,
+      initialEvidence: f.evidencia,
+    }));
+  }, [matchedAudit]);
+
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(evidenceList[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    // Will be set properly once liveEvidenceList is known; use first fallback for initial render
+    return evidenceList[0]?.id ?? "";
+  });
   const [workflow, setWorkflow] = useState<WorkflowStatus>("rascunho");
   const [revisionList, setRevisionList] = useState<Revision[]>([
     { version: "Rev. 02", date: "18/02/2026 14:30", author: "Carlos M. Silva", action: "Ajuste de classificacao para EV-002" },
     { version: "Rev. 01", date: "17/02/2026 09:05", author: "Ana R. Costa", action: "Criacao inicial do RAI" },
   ]);
 
+  // Sync selectedId to the first item in liveEvidenceList when it becomes available
+  React.useEffect(() => {
+    if (liveEvidenceList.length > 0) {
+      setSelectedId(liveEvidenceList[0].id);
+    }
+  }, [liveEvidenceList]);
+
   const selected = useMemo(
-    () => evidenceList.find((item) => item.id === selectedId) ?? evidenceList[0],
-    [selectedId]
+    () => liveEvidenceList.find((item) => item.id === selectedId) ?? liveEvidenceList[0],
+    [selectedId, liveEvidenceList]
   );
 
   const [norma, setNorma] = useState<NormCode>(selected?.initialNorm ?? "iso9001");
@@ -266,6 +314,17 @@ export default function AuditReportPage() {
     standard: "ISO 9001:2015",
     auditor: "Carlos M. Silva",
   });
+
+  // When the matched audit loads, populate auditInfo from real data
+  React.useEffect(() => {
+    if (!matchedAudit) return;
+    setAuditInfo({
+      id: matchedAudit.codigo,
+      client: matchedAudit.cliente_nome ?? "",
+      standard: matchedAudit.norma,
+      auditor: matchedAudit.auditor,
+    });
+  }, [matchedAudit]);
 
   const clauses = clauseLibrary[norma] ?? [];
 
@@ -328,15 +387,15 @@ export default function AuditReportPage() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return evidenceList;
-    return evidenceList.filter(
+    if (!term) return liveEvidenceList;
+    return liveEvidenceList.filter(
       (item) =>
         item.id.toLowerCase().includes(term) ||
         item.titulo.toLowerCase().includes(term) ||
         item.processo.toLowerCase().includes(term) ||
         item.initialClause.toLowerCase().includes(term)
     );
-  }, [search]);
+  }, [search, liveEvidenceList]);
 
   const qualityChecks = useMemo(() => {
     const clarity = descricao.trim().length >= 40;
@@ -381,7 +440,7 @@ export default function AuditReportPage() {
 
   const suggestDescriptionByAi = () => {
     if (evidenceMissing) {
-      window.alert("IA bloqueada por anti-vies: faltam dados objetivos de evidencia. Complete a evidencia antes da sugestao.");
+      toast.warning("Análise bloqueada por anti-viés: faltam dados objetivos de evidência. Complete a evidência antes da sugestão.");
       return;
     }
     const clauseMeta = clauses.find((item) => item.clause === clausula);
@@ -393,7 +452,7 @@ export default function AuditReportPage() {
 
   const suggestRecommendationByAi = () => {
     if (evidenceMissing) {
-      window.alert("IA bloqueada por anti-vies: sem evidencia suficiente para recomendar acao. Informe fatos verificaveis.");
+      toast.warning("Análise bloqueada por anti-viés: sem evidência suficiente para recomendar ação. Informe fatos verificáveis.");
       return;
     }
     const base =
@@ -407,28 +466,78 @@ export default function AuditReportPage() {
     setRecomendacao(`${base} Prazo sugerido: ${prazo}. Responsavel: ${responsavel || "a definir"}.`);
   };
 
-  const saveDraft = () => {
-    localStorage.setItem(
-      "certifica:rai-context",
-      JSON.stringify({
-        auditId: auditInfo.id,
-        client: auditInfo.client,
-        standard: auditInfo.standard,
-        auditor: auditInfo.auditor,
-        classificacao,
-        requisito,
-        evidencia,
-        recomendacao,
-      })
-    );
+  const handleGenerateRAI = async () => {
+    if (!matchedAudit) {
+      toast.warning("Acesse via Auditorias > Abrir RAI para gerar o relatório.");
+      return;
+    }
+    setGeneratingRai(true);
+    try {
+      const text = await generateRAI({
+        auditoria: matchedAudit.codigo,
+        cliente: matchedAudit.cliente_nome ?? "N/A",
+        norma: matchedAudit.norma,
+        auditor: matchedAudit.auditor_lider ?? matchedAudit.auditor ?? "N/A",
+        dataInicio: matchedAudit.data_inicio ?? "",
+        dataFim: matchedAudit.data_fim ?? "",
+        findings: (matchedAudit.findings ?? []).map((f) => ({
+          tipo: f.tipo,
+          clausula: f.clausula,
+          descricao: f.descricao,
+        })),
+      });
+      setRecomendacao(text);
+      toast.success("RAI gerado! Revise e salve o rascunho.");
+    } catch (err: any) {
+      toast.error("Erro ao gerar RAI: " + (err?.message ?? "tente novamente"));
+    } finally {
+      setGeneratingRai(false);
+    }
+  };
+
+  const saveDraft = async () => {
+    const payload = {
+      auditId: auditInfo.id,
+      client: auditInfo.client,
+      standard: auditInfo.standard,
+      auditor: auditInfo.auditor,
+      classificacao,
+      requisito,
+      evidencia,
+      recomendacao,
+    };
+
+    // Always persist to localStorage
+    localStorage.setItem("certifica:rai-context", JSON.stringify(payload));
     addRevision(`Rascunho salvo para ${selected.id}`);
+
+    // Persist to Supabase when a real audit is matched
+    if (matchedAudit && auditIdFromUrl) {
+      const conteudo = { classificacao, requisito, evidencia, recomendacao, descricao };
+      if (matchedAudit.rai_report) {
+        await updateRai(matchedAudit.rai_report.id, { conteudo });
+      } else {
+        await createRai({
+          audit_id: auditIdFromUrl,
+          codigo: `RAI-${matchedAudit.codigo}`,
+          titulo: `Relatorio de Auditoria - ${auditInfo.client}`,
+          conteudo,
+          status: "rascunho",
+          elaborado_por: auditInfo.auditor,
+          revisado_por: "",
+          aprovado_por: "",
+        });
+      }
+    }
+
+    toast.success("Rascunho salvo!");
   };
 
   const nextWorkflow = () => {
     const idx = workflowFlow.indexOf(workflow);
     if (idx >= workflowFlow.length - 1) return;
     if (!canMoveForward) {
-      window.alert("Nao foi possivel avancar: revise qualidade textual, consistencia severidade/classificacao e evidencia objetiva.");
+      toast.error("Não foi possível avançar: revise qualidade textual, consistência severidade/classificação e evidência objetiva.");
       return;
     }
     const next = workflowFlow[idx + 1];
@@ -455,11 +564,12 @@ export default function AuditReportPage() {
     navigator.clipboard.writeText(content).catch(() => null);
     setLastExport(nowBr());
     addRevision("Exportacao PDF tecnica gerada");
+    toast.success("Conteudo copiado para area de transferencia");
   };
 
   return (
-    <div className="flex h-full">
-      <aside className="w-[300px] border-r border-certifica-200 bg-white flex flex-col">
+    <div className="flex flex-col lg:flex-row lg:h-full overflow-auto lg:overflow-hidden">
+      <aside className="w-full lg:w-[300px] lg:flex-shrink-0 border-b lg:border-b-0 lg:border-r border-certifica-200 bg-white flex flex-col max-h-[240px] lg:max-h-none">
         <div className="px-4 py-3 border-b border-certifica-200">
           <div className="text-[11px] tracking-[0.06em] uppercase text-certifica-500 mb-2" style={{ fontWeight: 600 }}>
             Evidencias RAI
@@ -475,40 +585,46 @@ export default function AuditReportPage() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {filtered.map((ev) => {
-            const active = ev.id === selectedId;
-            const badge = statusBadge(ev.status);
-            return (
-              <button
-                key={ev.id}
-                onClick={() => setSelectedId(ev.id)}
-                className={`w-full text-left px-4 py-3 border-b border-certifica-200 transition-colors ${active ? "bg-certifica-50" : "hover:bg-certifica-50/60"}`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>
-                    {ev.id}
-                  </span>
-                  <DSBadge variant={badge.variant} className="text-[9px] px-1.5 py-0">
-                    {badge.label}
-                  </DSBadge>
-                </div>
-                <div className="text-[12px] text-certifica-dark" style={{ fontWeight: active ? 600 : 400 }}>
-                  {ev.titulo}
-                </div>
-                <div className="text-[10.5px] text-certifica-500 mt-1">{ev.processo} · Clausula {ev.initialClause}</div>
-              </button>
-            );
-          })}
+          {auditIdFromUrl && audits.length === 0 ? (
+            <div className="px-4 py-6 text-[12px] text-certifica-500 text-center">
+              Carregando evidencias...
+            </div>
+          ) : (
+            filtered.map((ev) => {
+              const active = ev.id === selectedId;
+              const badge = statusBadge(ev.status);
+              return (
+                <button
+                  key={ev.id}
+                  onClick={() => setSelectedId(ev.id)}
+                  className={`w-full text-left px-4 py-3 border-b border-certifica-200 transition-colors ${active ? "bg-certifica-50" : "hover:bg-certifica-50/60"}`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>
+                      {ev.id}
+                    </span>
+                    <DSBadge variant={badge.variant} className="text-[9px] px-1.5 py-0">
+                      {badge.label}
+                    </DSBadge>
+                  </div>
+                  <div className="text-[12px] text-certifica-dark" style={{ fontWeight: active ? 600 : 400 }}>
+                    {ev.titulo}
+                  </div>
+                  <div className="text-[10.5px] text-certifica-500 mt-1">{ev.processo} · Clausula {ev.initialClause}</div>
+                </button>
+              );
+            })
+          )}
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto min-h-[500px] lg:min-h-0">
         <div className="max-w-[760px] mx-auto px-6 py-6 space-y-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[12px] text-certifica-700 font-mono" style={{ fontWeight: 600 }}>
-                  {selected.id}
+                  {selected?.id}
                 </span>
                 <ChevronRight className="w-3 h-3 text-certifica-500/60" strokeWidth={1.5} />
                 <span className="text-[12px] text-certifica-500">Fluxo RAI rastreavel</span>
@@ -518,12 +634,21 @@ export default function AuditReportPage() {
                 {auditInfo.id} · {auditInfo.standard} · {auditInfo.auditor}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <DSButton variant="outline" size="sm" icon={<Printer className="w-3.5 h-3.5" strokeWidth={1.5} />}>
                 Imprimir
               </DSButton>
               <DSButton variant="outline" size="sm" icon={<Save className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={saveDraft}>
                 Salvar
+              </DSButton>
+              <DSButton
+                variant="outline"
+                size="sm"
+                icon={generatingRai ? <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} /> : <Bot className="w-3.5 h-3.5" strokeWidth={1.5} />}
+                onClick={handleGenerateRAI}
+                disabled={generatingRai}
+              >
+                {generatingRai ? "Gerando…" : "Gerar Relatório"}
               </DSButton>
               <DSButton variant="primary" size="sm" icon={<Send className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={nextWorkflow}>
                 Avancar workflow
@@ -560,7 +685,7 @@ export default function AuditReportPage() {
             />
             <div className="flex justify-end">
               <DSButton variant="outline" size="sm" icon={<Lightbulb className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={suggestDescriptionByAi}>
-                IA sugerir descricao
+                Sugerir descrição
               </DSButton>
             </div>
 
@@ -572,7 +697,7 @@ export default function AuditReportPage() {
             />
             {evidenceMissing && (
               <div className="text-[12px] text-nao-conformidade bg-nao-conformidade/5 border border-nao-conformidade/20 rounded-[4px] px-3 py-2">
-                Regra anti-vies: IA nao pode inventar evidencia. Dados insuficientes, complemente com fato objetivo.
+                Regra anti-viés: a análise não pode inventar evidência. Dados insuficientes — complemente com fato objetivo.
               </div>
             )}
 
@@ -637,14 +762,14 @@ export default function AuditReportPage() {
             />
             <div className="flex justify-end">
               <DSButton variant="outline" size="sm" icon={<Lightbulb className="w-3.5 h-3.5" strokeWidth={1.5} />} onClick={suggestRecommendationByAi}>
-                IA sugerir recomendacao
+                Sugerir recomendação
               </DSButton>
             </div>
           </div>
         </div>
       </main>
 
-      <aside className="w-[290px] border-l border-certifica-200 bg-white overflow-y-auto">
+      <aside className="w-full lg:w-[290px] lg:flex-shrink-0 border-t lg:border-t-0 lg:border-l border-certifica-200 bg-white overflow-y-auto">
         <div className="px-4 py-3 border-b border-certifica-200">
           <div className="text-[10px] tracking-[0.08em] uppercase text-certifica-500 mb-2" style={{ fontWeight: 600 }}>
             Workflow de aprovacao
