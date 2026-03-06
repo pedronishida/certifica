@@ -1,4 +1,7 @@
-const BASE = "/recall-api";
+// Em produção (Vercel) as chamadas vão para /api/recall-api/[...path]
+// que faz proxy seguro para https://us-west-2.recall.ai/api/v1
+// O token fica no servidor — nunca exposto no bundle do cliente.
+const BASE = "/api/recall-api";
 
 interface TranscriptArtifact {
   id: string;
