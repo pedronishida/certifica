@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSButton } from "../components/ds/DSButton";
 import { toast } from "sonner";
 import { useDocuments } from "../lib/useDocuments";
@@ -501,6 +502,7 @@ function UploadModal({
     expiresAt: string;
   }) => void;
 }) {
+  useBodyScrollLock(true);
   const [name, setName] = useState("");
   const [type, setType] = useState<DocType>("pdf");
   const [size, setSize] = useState("1.0 MB");

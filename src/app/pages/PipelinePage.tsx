@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo } from "react";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import { DSButton } from "../components/ds/DSButton";
@@ -309,6 +310,7 @@ export default function PipelinePage() {
   const [viewMode, setViewMode] = useState<"kanban" | "gantt">("kanban");
   const [isCreateColumnOpen, setIsCreateColumnOpen] = useState(false);
   const [isCreateOpportunityOpen, setIsCreateOpportunityOpen] = useState(false);
+  useBodyScrollLock(!!selectedCard || isCreateColumnOpen || isCreateOpportunityOpen);
   const [targetColumnId, setTargetColumnId] = useState<string | null>(null);
   const boardScrollRef = useRef<HTMLDivElement>(null);
   const isBoardDraggingRef = useRef(false);

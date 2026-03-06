@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { toast } from "sonner";
 
 import { DSCard } from "../components/ds/DSCard";
@@ -43,6 +44,7 @@ export default function AuditoriasPage() {
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isRaiModalOpen, setIsRaiModalOpen] = useState(false);
+  useBodyScrollLock(isCreateModalOpen || isRaiModalOpen);
   const [copiedRai, setCopiedRai] = useState(false);
   const [clienteOptions, setClienteOptions] = useState<{ id: string; razao_social: string }[]>([]);
   const [newAudit, setNewAudit] = useState({

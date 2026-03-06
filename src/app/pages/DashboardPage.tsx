@@ -1,5 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSCard } from "../components/ds/DSCard";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
@@ -107,6 +108,7 @@ export default function DashboardPage() {
   const [selectedKpi, setSelectedKpi] = React.useState<KpiKey | null>(null);
   const [detailProject, setDetailProject] = React.useState<DashboardProject | null>(null);
   const [showNewProject, setShowNewProject] = React.useState(false);
+  useBodyScrollLock(!!selectedKpi || !!detailProject || showNewProject);
   const [saving, setSaving] = React.useState(false);
   const [aiInsights, setAiInsights] = React.useState<{ recomendacao: string; alertas: string[] } | null>(null);
   const [loadingInsights, setLoadingInsights] = React.useState(false);

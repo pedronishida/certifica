@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSButton } from "../components/ds/DSButton";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSInput } from "../components/ds/DSInput";
@@ -512,6 +513,7 @@ function ClientFormModal({
   existingClients: ClienteUI[];
   saving: boolean;
 }) {
+  useBodyScrollLock(true);
   const [cnpjInput, setCnpjInput] = useState(initialData?.cnpj ?? "");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [looked, setLooked] = useState(mode === "edit");

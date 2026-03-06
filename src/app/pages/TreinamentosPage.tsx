@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
 import {
@@ -82,6 +83,7 @@ export default function TreinamentosPage() {
 
   // Create training modal
   const [showCreateModal, setShowCreateModal] = useState(false);
+  useBodyScrollLock(showEnrollModal || showCreateModal);
   const [createForm, setCreateForm] = useState<{
     titulo: string;
     descricao: string;

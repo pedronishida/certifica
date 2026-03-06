@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
 import {
@@ -428,6 +428,16 @@ export default function NormasPage() {
   ]);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignForm, setAssignForm] = useState({ company: "", normId: "", consultant: "", targetDate: "" });
+
+  // Trava scroll do body quando modal está aberto
+  useEffect(() => {
+    if (showAssignModal) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [showAssignModal]);
 
   const filteredNorms = useMemo(() => {
     return norms.filter((n) => {

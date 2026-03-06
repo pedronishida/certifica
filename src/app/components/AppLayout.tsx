@@ -840,7 +840,7 @@ export default function AppLayout() {
         )}
 
         {/* Content */}
-        <main className="flex-1 overflow-y-auto bg-certifica-50">
+        <main id="certifica-main" className="flex-1 overflow-y-auto bg-certifica-50">
           <ErrorBoundary fallbackMessage="Ocorreu um erro ao carregar esta página. Tente novamente.">
             <div key={location.pathname} className="certifica-fade-in h-full">
               <Outlet />

@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSButton } from "../components/ds/DSButton";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSInput } from "../components/ds/DSInput";
@@ -922,6 +923,7 @@ function NewProjectModal({ onClose, onCreate, clientesDisponiveis, saving }: {
   clientesDisponiveis: ClienteRef[];
   saving: boolean;
 }) {
+  useBodyScrollLock(true);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [wizardError, setWizardError] = useState("");
 

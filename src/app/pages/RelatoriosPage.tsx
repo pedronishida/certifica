@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import { DSBadge } from "../components/ds/DSBadge";
 import { DSButton } from "../components/ds/DSButton";
 import { DSInput } from "../components/ds/DSInput";
@@ -110,6 +111,7 @@ export default function RelatoriosPage() {
     ];
   });
   const [showSchedule, setShowSchedule] = useState(false);
+  useBodyScrollLock(showSchedule);
   const [scheduleForm, setScheduleForm] = useState({ recurrence: "Semanal · Seg 08:00", nextRun: "", destination: "" });
   const [chartView, setChartView] = useState<"bar" | "line" | "pie">("bar");
 
